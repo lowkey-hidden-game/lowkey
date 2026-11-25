@@ -375,6 +375,9 @@ function handle(m, joinCb) {
       if (m.kind === 'treasure_moved') toast('👀 حسيت بحركة.. الكنز غيّر مكانه!');
       if (m.kind === 'dropped') { toast('💰 ' + m.by + ' كشف ' + m.on + '.. الكنز على الأرض! اللحقوه'); AudioFX.sting(); shake = Math.max(shake, 0.5); }
       if (m.kind === 'picked') { toast('✋ ' + m.name + ' خد الكنز!'); AudioFX.tick(); }
+      if (m.kind === 'zone_warn') { toast('⚠️ منطقة هتتقفل بعد ٥ ثواني! اللي جواها يطلع'); AudioFX.sting(); }
+      if (m.kind === 'zone_lock') { toast('🔒 المنطقة اتقفلت.. لازم تلف حواليها'); AudioFX.tick(); }
+      if (m.kind === 'zone_open') { toast('🔓 المنطقة اتفتحت'); }
       if (m.kind === 'gone') toast('🔌 ' + m.name + ' قطع.. مستنيينه يرجع');
       if (m.kind === 'back') toast('🔄 ' + m.name + ' رجع تاني!');
       if (m.kind === 'exposed' || m.kind === 'treasure_moved') alarmBoost = 1;
@@ -556,7 +559,7 @@ const AudioFX = (() => {
 let renderer = null, scene = null, camera = null;
 let worldBuilt = false;
 let wallMeshes = [], dynWallMeshes = [], spotMeshes = [], powerMeshes = new Map(), playerMeshes = new Map();
-let vaultMesh = null, vaultGlow = null, vaultPillar = null, dropMesh = null;
+let vaultMesh = null, vaultGlow = null, vaultPillar = null, dropMesh = null, zoneMesh = null;
 let glFailed = false;
 
 const POW_COLORS = { speed: 0xffd34d, shield: 0x6bb8ff, reveal: 0xff8ad4, ghost: 0xb48cff, goggles: 0x7ee0ff };
@@ -1626,6 +1629,24 @@ function tick() {
     dropMesh = null;
   }
 
+  // locked-zone event: pulsing red floor while warning, steady tint while locked
+  if (phase === 'game' && state.zone) {
+    const z = state.zone;
+    if (!zoneMesh) {
+      zoneMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({ color: 0xff4455, transparent: true, opacity: 0.1, depthWrite: false }));
+      zoneMesh.rotation.x = -Math.PI / 2;
+      scene.add(zoneMesh);
+    }
+    zoneMesh.scale.set(z.w, z.h, 1);
+    zoneMesh.position.set(z.x + z.w / 2, 1.2, z.y + z.h / 2);
+    zoneMesh.material.opacity = z.st === 'warn' ? 0.1 + 0.09 * Math.abs(Math.sin(now / 180)) : 0.07;
+  } else if (zoneMesh) {
+    scene.remove(zoneMesh);
+    zoneMesh = null;
+  }
+
   // camera: free orbit (right-thumb drag), pitch-adjustable, no auto-turn
   const mine = state.players.find(p => p.id === myId);
   if (!mine && phase === 'game' && map) {
@@ -1702,6 +1723,12 @@ function drawMinimap() {
   g.fillRect(v.x * s, v.y * s, v.w * s, v.h * s);
   g.strokeStyle = '#ffd34d'; g.lineWidth = 2;
   g.strokeRect(v.x * s - 1, v.y * s - 1, v.w * s + 2, v.h * s + 2);
+  // locked zone: red rectangle (pulsing while it warns)
+  if (state.zone) {
+    g.strokeStyle = state.zone.st === 'warn' ? 'rgba(255,70,90,' + (0.5 + 0.4 * Math.abs(Math.sin(Date.now() / 180))) + ')' : 'rgba(255,70,90,.8)';
+    g.lineWidth = 2;
+    g.strokeRect(state.zone.x * s, state.zone.y * s, state.zone.w * s, state.zone.h * s);
+  }
   // dropped treasure: pulsing gold dot
   if (state.drop) {
     g.fillStyle = '#ffd34d';

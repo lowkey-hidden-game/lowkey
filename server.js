@@ -129,6 +129,70 @@ function botSense(room, p, now) {
   }
 }
 
+// locked-zone event: one rectangular district seals per round (announced 5s ahead)
+const ZONE_AT_SEC = Number(process.env.ZONE_AT_SEC) || 0;     // 0 = auto at 45% of the round
+const ZONE_LOCK_MS = Number(process.env.ZONE_LOCK_MS) || 25000;
+const ZONE_WARN_MS = Number(process.env.ZONE_WARN_MS) || 5000;
+const ZONE_RECT = (process.env.ZONE_RECT || '').split(',').map(Number).filter(n => !isNaN(n) && n > 0);
+const ZONE_W = 380, ZONE_H = 260, ZONE_SEG = 78, ZONE_THICK = 24;
+
+function pickZone(room) {
+  if (ZONE_RECT.length === 4) return { x: ZONE_RECT[0], y: ZONE_RECT[1], w: ZONE_RECT[2], h: ZONE_RECT[3] };
+  const vx = MAP.vault.x - 90, vy = MAP.vault.y - 90, vw = MAP.vault.w + 180, vh = MAP.vault.h + 180;
+  for (let i = 0; i < 25; i++) {
+    const x = 50 + crypto.randomInt(MAP.w - ZONE_W - 100);
+    const y = 50 + crypto.randomInt(MAP.h - ZONE_H - 100);
+    // never seal the vault approach: reject zones touching its expanded area
+    if (x < vx + vw && x + ZONE_W > vx && y < vy + vh && y + ZONE_H > vy) continue;
+    return { x, y, w: ZONE_W, h: ZONE_H };
+  }
+  return null; // no safe spot this round: skip the event rather than risk the vault
+}
+
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// push everyone out of a rect (nearest side), so a lock can never trap anyone
+function pushOutOf(room, z) {
+  const M = PLAYER_R + 10;
+  for (const p of room.players.values()) {
+    if (p.gone) continue;
+    if (p.x < z.x - M || p.x > z.x + z.w + M || p.y < z.y - M || p.y > z.y + z.h + M) continue;
+    const sides = [
+      { d: Math.abs(p.x - (z.x - M)), x: z.x - M, y: p.y },
+      { d: Math.abs(p.x - (z.x + z.w + M)), x: z.x + z.w + M, y: p.y },
+      { d: Math.abs(p.y - (z.y - M)), x: p.x, y: z.y - M },
+      { d: Math.abs(p.y - (z.y + z.h + M)), x: p.x, y: z.y + z.h + M },
+    ].sort((a, b) => a.d - b.d);
+    for (const s of sides) {
+      const nx = Math.max(PLAYER_R + 22, Math.min(MAP.w - PLAYER_R - 22, s.x));
+      const ny = Math.max(PLAYER_R + 22, Math.min(MAP.h - PLAYER_R - 22, s.y));
+      if (!collide(room, nx, ny, PLAYER_R)) { p.x = nx; p.y = ny; break; }
+    }
+    p.channel = null; p.searchProg = 0;
+  }
+}
+
+function lockZone(room, now) {
+  pushOutOf(room, room.zone);
+  const z = room.zone;
+  const until = now + ZONE_LOCK_MS;
+  for (let x = z.x; x < z.x + z.w; x += ZONE_SEG) {
+    const w = Math.min(ZONE_SEG, z.x + z.w - x);
+    room.dynWalls.push({ x, y: z.y - ZONE_THICK / 2, w, h: ZONE_THICK, id: ++room.wallSeq, expiresAt: until });
+    room.dynWalls.push({ x, y: z.y + z.h - ZONE_THICK / 2, w, h: ZONE_THICK, id: ++room.wallSeq, expiresAt: until });
+  }
+  for (let y = z.y; y < z.y + z.h; y += ZONE_SEG) {
+    const h = Math.min(ZONE_SEG, z.y + z.h - y);
+    room.dynWalls.push({ x: z.x - ZONE_THICK / 2, y, w: ZONE_THICK, h, id: ++room.wallSeq, expiresAt: until });
+    room.dynWalls.push({ x: z.x + z.w - ZONE_THICK / 2, y, w: ZONE_THICK, h, id: ++room.wallSeq, expiresAt: until });
+  }
+  room.zone.st = 'lock';
+  room.zone.until = until;
+  broadcast(room, { t: 'event', kind: 'zone_lock', zone: { x: z.x, y: z.y, w: z.w, h: z.h } });
+}
+
 const AI_LEVELS = {
   easy:   { reactMin: 1100, reactVar: 1600, hunchP: 0.002, lingerMs: 4500, pauseP: 0.008, wallP: 0,    detourP: 0.005, puRange: 120, memSec: 10, learnSpots: false, predictT: 0,   patterns: false, counterJuke: false },
   normal: { reactMin: 500,  reactVar: 700,  hunchP: 0.006, lingerMs: 2500, pauseP: 0.004, wallP: 0.3,  detourP: 0.02,  puRange: 220, memSec: 20, learnSpots: true,  predictT: 0,   patterns: false, counterJuke: false },
@@ -163,6 +227,7 @@ function makeRoom(code) {
     powerSeq: 0,
     powerups: [],
     dynWalls: [],
+    zone: null, zonePlanAt: 0,
     dropped: null,
     wallSeq: 0,
     botSeq: 0,
@@ -236,6 +301,8 @@ function startRound(room) {
   room.powerAt = Date.now() + 3000; // first power-up early
   room.powerups = [];
   room.dynWalls = [];
+  room.zone = null;
+  room.zonePlanAt = (ZONE_AT_SEC || ROUND_SECONDS >= 60) ? Date.now() + (ZONE_AT_SEC || ROUND_SECONDS * 0.45) * 1000 : 0;
   room.dropped = null;
   let i = 0;
   for (const p of room.players.values()) {
@@ -419,6 +486,7 @@ function tryBuild(room, p) {
   const w = { x: Math.round(cx - WALL_SIZE / 2), y: Math.round(cy - WALL_SIZE / 2), w: WALL_SIZE, h: WALL_SIZE, id: ++room.wallSeq, expiresAt: now + WALL_SECONDS * 1000 };
   if (collide(room, cx, cy, WALL_SIZE / 2)) return; // no space
   if (inVault({ x: cx, y: cy })) return; // keep the vault open
+  if (room.zone && rectsOverlap(w, { x: room.zone.x - 40, y: room.zone.y - 40, w: room.zone.w + 80, h: room.zone.h + 80 })) return; // no fusing walls to the zone barrier
   p.walls--;
   p.wallCdUntil = now + WALL_COOLDOWN * 1000;
   room.dynWalls.push(w);
@@ -500,6 +568,21 @@ function tick(room, dt) {
     } else {
       room.dropped.at = now; // nowhere left to hide it; it stays on the ground
     }
+  }
+
+  // locked-zone event: warn -> lock -> open
+  if (room.zonePlanAt && now >= room.zonePlanAt) {
+    room.zonePlanAt = 0;
+    const z = pickZone(room);
+    if (z) {
+      room.zone = { ...z, st: 'warn', until: now + ZONE_WARN_MS };
+      broadcast(room, { t: 'event', kind: 'zone_warn', zone: { x: z.x, y: z.y, w: z.w, h: z.h } });
+    }
+  }
+  if (room.zone && room.zone.st === 'warn' && now >= room.zone.until) lockZone(room, now);
+  if (room.zone && room.zone.st === 'lock' && now >= room.zone.until) {
+    room.zone = null; // barrier segments die with the same timestamp via the dynWalls sweep
+    broadcast(room, { t: 'event', kind: 'zone_open' });
   }
 
   // power-up spawns
@@ -603,6 +686,7 @@ function tick(room, dt) {
       spots: [...room.searched],
       drop: room.dropped ? { x: Math.round(room.dropped.x), y: Math.round(room.dropped.y), ttl: Math.max(0, Math.ceil((DROP_SECONDS * 1000 - (now - room.dropped.at)) / 1000)) } : null,
       walls: room.dynWalls.map(w => ({ x: w.x, y: w.y, w: w.w, h: w.h, ttl: Math.ceil((w.expiresAt - now) / 1000) })),
+      zone: room.zone ? { x: room.zone.x, y: room.zone.y, w: room.zone.w, h: room.zone.h, st: room.zone.st, ttl: Math.max(0, Math.ceil((room.zone.until - now) / 1000)) } : null,
       powers: room.powerups,
       me: {
         walls: viewer.walls,
@@ -758,7 +842,9 @@ function botThink(room, p, dt) {
 
   p.lastGoal = { x: tx, y: ty };
   let ang = Math.atan2(ty - p.y, tx - p.x);
-  if (p.stuck > 4) ang += (crypto.randomInt(2) ? 1 : -1) * Math.PI / 2;
+  // wall-hug detour: commit to one slide direction for ~1.2s (sim time) instead of flipping every tick
+  if (p.detourT > 0) { p.detourT -= dt; ang += p.detourSide * Math.PI / 2; }
+  else if (p.stuck > 4) { p.detourSide = crypto.randomInt(2) ? 1 : -1; p.detourT = 1.2; p.stuck = 0; ang += p.detourSide * Math.PI / 2; }
   p.dx = Math.cos(ang);
   p.dy = Math.sin(ang);
 }
@@ -789,7 +875,7 @@ function addBot(room) {
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') { res.writeHead(200); res.end('ok v4.6'); return; }
+  if (req.url === '/health') { res.writeHead(200); res.end('ok v4.7'); return; }
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   if (urlPath === '/classic') urlPath = '/classic.html';
@@ -1058,4 +1144,4 @@ if (require.main === module) {
 }
 
 // exported for the automated fairness/memory test suite (test9)
-module.exports = { rooms, MAP, AI_LEVELS, makeRoom, addBot, botThink, botSense, startRound, hasLOS, BOT_SIGHT, tick };
+module.exports = { rooms, MAP, AI_LEVELS, makeRoom, addBot, botThink, botSense, startRound, hasLOS, BOT_SIGHT, tick, pickZone, lockZone, pushOutOf, tryBuild };
