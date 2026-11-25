@@ -70,6 +70,12 @@ const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 10;
 const ENDED_BACK_TO_LOBBY_MS = 9000;
 const POWER_TYPES = ['speed', 'shield', 'reveal', 'ghost', 'goggles'];
+const GONE_MS = 45000; // reconnect grace: player stands still, round continues
+const AI_LEVELS = {
+  easy:   { reactMin: 1100, reactVar: 1600, hunchP: 0.002, lingerMs: 4500, pauseP: 0.008, wallP: 0,    detourP: 0.005, puRange: 120 },
+  normal: { reactMin: 500,  reactVar: 700,  hunchP: 0.006, lingerMs: 2500, pauseP: 0.004, wallP: 0.3,  detourP: 0.02,  puRange: 220 },
+  hard:   { reactMin: 250,  reactVar: 400,  hunchP: 0.014, lingerMs: 1500, pauseP: 0.002, wallP: 0.6,  detourP: 0.05,  puRange: 340 },
+};
 const AVATARS = ['🦊', '🐼', '🐸', '🦁', '🐰', '🐯', '🐵', '🦉', '🐙', '🐺', '🦄', '🐝'];
 const FORCE_POWER = process.env.FORCE_POWER || null;
 
@@ -87,7 +93,9 @@ function makeRoom(code) {
   return {
     code,
     players: new Map(),
+    spectators: new Map(),
     state: 'lobby',
+    botLevel: 'normal',
     hostId: null,
     treasureSpot: -1,
     searched: new Set(),
@@ -106,6 +114,21 @@ function makeRoom(code) {
 
 function pid() { return crypto.randomBytes(4).toString('hex'); }
 
+function freshPlayer(id, ws, room, name) {
+  return {
+    id, ws, tok: pid() + pid(), bot: false, room, name,
+    avatar: room.players.size % AVATARS.length,
+    x: 0, y: 0, dx: 0, dy: 0, wins: 0,
+    carrier: false, channel: null, searchProg: 0, depositProg: 0,
+    frozenUntil: 0, exposeCdUntil: 0, searching: false,
+    walls: WALLS_PER_ROUND, wallCdUntil: 0, shield: false,
+    speedUntil: 0, revealUntil: 0, ghostUsed: false, ghostUntil: 0,
+    gogglesUntil: 0, crouch: false,
+    fx: 1, fy: 0, pauseUntil: 0, exposeAt: 0, adjacentSince: 0,
+    gone: false, goneTimer: null,
+  };
+}
+
 function publicPlayer(p) {
   return { id: p.id, name: p.name, bot: !!p.bot, host: p.room.hostId === p.id, wins: p.wins, avatar: p.avatar };
 }
@@ -121,6 +144,10 @@ function broadcast(room, obj) {
     if (p.bot || !p.ws) continue;
     try { wsSend(p.ws, msg); } catch (e) { }
   }
+  for (const s of room.spectators.values()) {
+    if (!s.ws) continue;
+    try { wsSend(s.ws, msg); } catch (e) { }
+  }
 }
 
 function lobbyState(room) {
@@ -130,12 +157,14 @@ function lobbyState(room) {
     players: [...room.players.values()].map(publicPlayer),
     canStart: room.players.size >= MIN_PLAYERS && room.state === 'lobby',
     minPlayers: MIN_PLAYERS,
+    botLevel: room.botLevel,
   });
 }
 
 function ensureHost(room) {
-  if (room.hostId && room.players.has(room.hostId)) return;
-  const first = room.players.values().next().value;
+  const cur = room.hostId && room.players.get(room.hostId);
+  if (cur && !cur.gone) return;
+  const first = [...room.players.values()].find(q => !q.bot && !q.gone) || room.players.values().next().value;
   room.hostId = first ? first.id : null;
 }
 
@@ -200,6 +229,15 @@ function endRound(room, winnerId, reason) {
   for (const p of room.players.values()) { p.dx = 0; p.dy = 0; p.channel = null; p.searching = false; }
   room.endTimer = setTimeout(() => {
     room.state = 'lobby';
+    // late joiners who watched the round become players for the next one
+    for (const s of [...room.spectators.values()]) {
+      room.spectators.delete(s.id);
+      const np = freshPlayer(s.id, s.ws, room, s.name);
+      np.tok = s.tok;
+      room.players.set(np.id, np);
+      sendTo(np, { t: 'joined', id: np.id, room: room.code, map: MAP, tok: np.tok });
+    }
+    ensureHost(room);
     lobbyState(room);
   }, ENDED_BACK_TO_LOBBY_MS);
 }
@@ -450,8 +488,10 @@ function tick(room, dt) {
   }
 
   // personalized state per viewer (ghost hides the carrier from others)
-  for (const viewer of room.players.values()) {
-    if (viewer.bot || !viewer.ws) continue;
+  const specViewer = { id: '', ws: null, gogglesUntil: 0, walls: 0, shield: false, ghostUntil: 0, ghostUsed: true, carrier: false, speedUntil: 0, revealUntil: 0, depositProg: 0, channel: null, searchProg: 0 };
+  const viewers = [...room.players.values()].filter(v => !v.bot && v.ws);
+  for (const s of room.spectators.values()) if (s.ws) viewers.push({ ...specViewer, ws: s.ws });
+  for (const viewer of viewers) {
     const payload = {
       t: 'state',
       left: Math.max(0, Math.ceil((room.endsAt - now) / 1000)),
@@ -492,19 +532,20 @@ function tick(room, dt) {
 // ---------------- Bots (human-like) ----------------
 function botThink(room, p, dt) {
   const now = Date.now();
+  const ai = p.ai || AI_LEVELS.normal;
   if (now < p.frozenUntil) { p.dx = 0; p.dy = 0; return; }
   if (p.channel) { p.dx = 0; p.dy = 0; return; }
   if (now < p.pauseUntil) { p.dx = 0; p.dy = 0; return; }
 
   // random human-like pauses
-  if (Math.random() < 0.004) { p.pauseUntil = now + 400 + crypto.randomInt(1200); return; }
+  if (Math.random() < ai.pauseP) { p.pauseUntil = now + 400 + crypto.randomInt(1200); return; }
 
   // delayed expose (reveal-driven, with reaction time)
   if (!p.exposeAt && now >= p.exposeCdUntil) {
     if (now < p.revealUntil) {
       const carrier = [...room.players.values()].find(q => q.carrier);
       if (carrier && Math.hypot(p.x - carrier.x, p.y - carrier.y) < EXPOSE_RADIUS * 0.9) {
-        p.exposeAt = now + 500 + crypto.randomInt(700);
+        p.exposeAt = now + ai.reactMin + crypto.randomInt(ai.reactVar);
       }
     } else {
       // hunch: someone lingering very close after the early game
@@ -512,8 +553,8 @@ function botThink(room, p, dt) {
       if (other && dist < 90) {
         p.adjacentSince = p.adjacentSince || now;
         const roundAge = (now - (room.endsAt - ROUND_SECONDS * 1000)) / 1000;
-        if (now - p.adjacentSince > 2500 && roundAge > 25 && Math.random() < 0.006) {
-          p.exposeAt = now + 600 + crypto.randomInt(900);
+        if (now - p.adjacentSince > ai.lingerMs && roundAge > 25 && Math.random() < ai.hunchP) {
+          p.exposeAt = now + ai.reactMin + 100 + crypto.randomInt(ai.reactVar + 200);
         }
       } else {
         p.adjacentSince = 0;
@@ -524,7 +565,7 @@ function botThink(room, p, dt) {
   let tx, ty;
 
   // grab a nearby power-up
-  let pu = null, pud = 220;
+  let pu = null, pud = ai.puRange;
   for (const q of room.powerups) {
     const d = Math.hypot(p.x - q.x, p.y - q.y);
     if (d < pud) { pud = d; pu = q; }
@@ -535,12 +576,12 @@ function botThink(room, p, dt) {
   } else if (p.carrier) {
     const { other, dist } = nearestOther(room, p);
     // drop a wall between us and a close pursuer
-    if (other && dist < 150 && p.walls > 0 && now >= p.wallCdUntil && Math.random() < 0.3) {
+    if (other && dist < 150 && p.walls > 0 && now >= p.wallCdUntil && Math.random() < ai.wallP) {
       p.fx = (p.x - other.x) / dist; p.fy = (p.y - other.y) / dist;
       tryBuild(room, p);
     }
     // sometimes detour when watched
-    if (other && dist < 200 && Math.random() < 0.02) {
+    if (other && dist < 200 && Math.random() < ai.detourP) {
       p.botTarget = { x: 300 + crypto.randomInt(1000), y: 150 + crypto.randomInt(700), until: now + 1500 };
     }
     if (p.botTarget && p.botTarget.until && now < p.botTarget.until) {
@@ -599,6 +640,7 @@ function addBot(room) {
     speedUntil: 0, revealUntil: 0, ghostUsed: false, ghostUntil: 0,
     gogglesUntil: 0, crouch: false,
     fx: 1, fy: 0, pauseUntil: 0, exposeAt: 0, adjacentSince: 0,
+    gone: false, ai: AI_LEVELS[room.botLevel] || AI_LEVELS.normal,
   };
   room.players.set(id, bot);
   ensureHost(room);
@@ -610,7 +652,7 @@ function addBot(room) {
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') { res.writeHead(200); res.end('ok v4.2'); return; }
+  if (req.url === '/health') { res.writeHead(200); res.end('ok v4.4'); return; }
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   if (urlPath === '/classic') urlPath = '/classic.html';
@@ -668,19 +710,37 @@ function handleConnection(socket) {
   function leave() {
     if (!player) return;
     const room = player.room;
-    room.players.delete(player.id);
-    if (player.carrier && room.state === 'playing') {
+    if (player.spec) {
+      room.spectators.delete(player.id);
+      player = null;
+      return;
+    }
+    // grace period: the player stands still and the round goes on; rejoin restores them
+    const p = player;
+    p.ws = null;
+    p.gone = true;
+    p.dx = 0; p.dy = 0; p.channel = null; p.searching = false;
+    ensureHost(room);
+    broadcast(room, { t: 'event', kind: 'gone', name: p.name });
+    p.goneTimer = setTimeout(() => finalRemove(room, p), GONE_MS);
+    player = null;
+  }
+
+  function finalRemove(room, p) {
+    if (!p.gone) return; // rejoined during the grace period
+    room.players.delete(p.id);
+    if (p.carrier && room.state === 'playing') {
       endRound(room, null, 'carrier_left');
     }
-    if (room.players.size === 0) {
+    const anyHuman = [...room.players.values()].some(q => !q.bot && !q.gone) || room.spectators.size > 0;
+    if (room.players.size === 0 || !anyHuman) {
       if (room.endTimer) clearTimeout(room.endTimer);
       if (room.interval) clearInterval(room.interval);
       rooms.delete(room.code);
-    } else {
-      ensureHost(room);
-      lobbyState(room);
+      return;
     }
-    player = null;
+    ensureHost(room);
+    lobbyState(room);
   }
 
   socket.on('data', chunk => {
@@ -736,6 +796,30 @@ function handleMessage(msg, setPlayer, getPlayer, socket, leave) {
   const player = getPlayer();
   if (msg.t === 'hello') {
     if (player) return;
+    // rejoin: same player, same round, treasure kept
+    const rj = msg.rejoin || null;
+    if (rj) {
+      const rroom = rooms.get(String(rj.room || '').toUpperCase());
+      const rp = rroom && rroom.players.get(String(rj.id || ''));
+      if (rroom && rp && rp.tok === rj.tok && rp.gone) {
+        clearTimeout(rp.goneTimer);
+        rp.gone = false;
+        rp.ws = socket;
+        setPlayer(rp);
+        wsSend(socket, JSON.stringify({ t: 'joined', id: rp.id, room: rroom.code, map: MAP, tok: rp.tok }));
+        ensureHost(rroom);
+        if (rroom.state === 'playing') {
+          wsSend(socket, JSON.stringify({ t: 'begin', map: MAP, players: [...rroom.players.values()].map(publicPlayer), roundSeconds: ROUND_SECONDS }));
+          if (rp.carrier) sendTo(rp, { t: 'secret', carrier: true });
+          broadcast(rroom, { t: 'event', kind: 'back', name: rp.name });
+        } else {
+          lobbyState(rroom);
+        }
+      } else {
+        wsSend(socket, JSON.stringify({ t: 'error', msg: 'rejoin_failed' }));
+      }
+      return;
+    }
     const name = String(msg.name || '').trim().slice(0, 14) || 'لاعب';
     let code = String(msg.room || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
     let room;
@@ -754,22 +838,21 @@ function handleMessage(msg, setPlayer, getPlayer, socket, leave) {
       wsSend(socket, JSON.stringify({ t: 'error', msg: 'room_full' }));
       return;
     }
+    if (room.state !== 'lobby') {
+      // late join: watch the live round, play the next one
+      const sid = pid();
+      const s = { id: sid, ws: socket, tok: pid() + pid(), spec: true, room, name };
+      room.spectators.set(sid, s);
+      setPlayer(s);
+      wsSend(socket, JSON.stringify({ t: 'spectate', id: sid, room: room.code, map: MAP, players: [...room.players.values()].map(publicPlayer), roundSeconds: ROUND_SECONDS }));
+      return;
+    }
     const id = pid();
-    const p = {
-      id, ws: socket, bot: false, room, name,
-      avatar: room.players.size % AVATARS.length,
-      x: 0, y: 0, dx: 0, dy: 0, wins: 0,
-      carrier: false, channel: null, searchProg: 0, depositProg: 0,
-      frozenUntil: 0, exposeCdUntil: 0, searching: false,
-      walls: WALLS_PER_ROUND, wallCdUntil: 0, shield: false,
-      speedUntil: 0, revealUntil: 0, ghostUsed: false, ghostUntil: 0,
-      gogglesUntil: 0, crouch: false,
-      fx: 1, fy: 0, pauseUntil: 0, exposeAt: 0, adjacentSince: 0,
-    };
+    const p = freshPlayer(id, socket, room, name);
     room.players.set(id, p);
     ensureHost(room);
     setPlayer(p);
-    wsSend(socket, JSON.stringify({ t: 'joined', id, room: room.code, map: MAP }));
+    wsSend(socket, JSON.stringify({ t: 'joined', id, room: room.code, map: MAP, tok: p.tok }));
     lobbyState(room);
     return;
   }
@@ -812,6 +895,15 @@ function handleMessage(msg, setPlayer, getPlayer, socket, leave) {
     case 'addbot':
       if (room.hostId === player.id && room.state === 'lobby') addBot(room);
       break;
+    case 'botlevel': {
+      if (room.hostId !== player.id || room.state !== 'lobby') break;
+      if (AI_LEVELS[msg.level]) {
+        room.botLevel = msg.level;
+        for (const q of room.players.values()) if (q.bot) q.ai = AI_LEVELS[msg.level];
+        lobbyState(room);
+      }
+      break;
+    }
     case 'rmbot': {
       if (room.hostId !== player.id || room.state !== 'lobby') break;
       const bot = [...room.players.values()].find(q => q.bot);

@@ -23,6 +23,7 @@
     background: #ffd34d; color: #1a1a1a; font-size: 18px; font-weight: bold; padding: 13px 34px; }
   button:disabled { background: #3a4767; color: #7c8bb0; }
   button.ghost { background: #232c44; color: #cfe0ff; font-size: 15px; padding: 10px 20px; }
+  .lvlbtn.sel { border: 1px solid #ffd34d !important; color: #ffd34d !important; }
   #roomCode { font-size: 40px; letter-spacing: 10px; color: #7ef0c1; font-weight: bold; direction: ltr;
     text-shadow: 0 0 16px rgba(126,240,193,.4); }
   #plist { display: flex; flex-direction: column; gap: 6px; min-width: 240px; }
@@ -37,6 +38,9 @@
   #effects { position: fixed; top: 50px; left: 14px; display: flex; gap: 6px; pointer-events: none; z-index: 5; }
   .fx { background: rgba(13,17,32,.8); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 4px 10px; font-size: 14px; }
   #secret { position: fixed; top: 84px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
+  #specBar { position: fixed; top: 152px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
+  #specBar span { background: rgba(20,28,52,.85); color: #cfe0ff; border: 1px solid rgba(255,255,255,.2);
+    padding: 8px 18px; border-radius: 999px; font-size: 15px; }
   #secret span { background: linear-gradient(90deg,#ffd34d,#ff9d3d); color: #1a1a1a; font-weight: bold;
     border-radius: 24px; padding: 9px 22px; font-size: 16px; box-shadow: 0 0 18px rgba(255,211,77,.5); }
   #toast { position: fixed; bottom: 190px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
@@ -119,6 +123,12 @@
     <button class="ghost" id="btnAddBot">🤖 زوّد بوت</button>
     <button class="ghost" id="btnRmBot">شيل بوت</button>
   </div>
+  <p class="sub" style="margin:12px 0 2px">مستوى البوت:</p>
+  <div id="botLvlRow" style="display:flex;gap:8px">
+    <button class="ghost lvlbtn" data-l="easy">سهل 😴</button>
+    <button class="ghost lvlbtn" data-l="normal">عادي 🙂</button>
+    <button class="ghost lvlbtn" data-l="hard">صعب 😈</button>
+  </div>
   <button id="btnStart">ابدأ اللعبة 🎮</button>
   <p class="sub" id="lobbyHint"></p>
 </div>
@@ -131,6 +141,7 @@
 </div>
 <div id="effects" class="hidden"></div>
 <div id="secret" class="hidden"><span>🤫 الكنز معاك! وصّله للخزنة من غير ما حد يشك</span></div>
+<div id="specBar" class="hidden"><span>👀 انت متفرّج على الجولة.. هتلعب في الجولة الجاية</span></div>
 <div id="toast" class="hidden"><span id="toastTxt"></span></div>
 <div id="vaultArrow" class="hidden">➤</div>
 <canvas id="minimap" class="hidden" width="256" height="160"></canvas>
@@ -211,7 +222,7 @@
 const $ = id => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
 
-let ws, myId = null, roomCode = null, map = null, roster = {};
+let ws, myId = null, roomCode = null, map = null, roster = {}, spectating = false;
 const AVATARS = ['🦊', '🐼', '🐸', '🦁', '🐰', '🐯', '🐵', '🦉', '🐙', '🐺', '🦄', '🐝'];
 const AV_COLORS = [0xff9d5c, 0xf2f2f2, 0x7ee081, 0xffc46b, 0xffb3d9, 0xffa94d, 0xc9a06b, 0xb9a8ff, 0x7ed3e8, 0x9aa7bd, 0xe8b3ff, 0xffe066];
 let state = { players: [], spots: [], walls: [], powers: [], left: 0, me: {} };
@@ -222,16 +233,26 @@ let ghostUntil = 0;
 
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
-function connect(name, code, cb) {
+function getSess() { try { return JSON.parse(localStorage.getItem('lk_sess') || 'null'); } catch (e) { return null; } }
+function setSess(s) { try { if (s) localStorage.setItem('lk_sess', JSON.stringify(s)); else localStorage.removeItem('lk_sess'); } catch (e) { } }
+
+let rejoinFailed = false, reconnectTries = 0;
+function connect(name, code, cb, rejoin) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(proto + '://' + location.host);
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name, room: code || '' }));
+  ws.onopen = () => ws.send(JSON.stringify(rejoin ? { t: 'hello', rejoin } : { t: 'hello', name, room: code || '' }));
   ws.onmessage = ev => {
     let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
     handle(m, cb);
   };
   ws.onclose = () => {
-    if (phase !== 'join') {
+    if (rejoinFailed || phase === 'join') return;
+    const s = getSess();
+    if (s && reconnectTries < 30) {
+      reconnectTries++;
+      toast('الاتصال قطع.. بنرجعك تاني 🔄');
+      setTimeout(() => { if (!rejoinFailed && phase !== 'join') connect(name, code, cb, { id: s.id, tok: s.tok, room: s.room }); }, 1800);
+    } else {
       toast('انقطع الاتصال.. حدّث الصفحة');
       setTimeout(() => location.reload(), 2500);
     }
@@ -242,12 +263,37 @@ function handle(m, joinCb) {
   switch (m.t) {
     case 'joined':
       myId = m.id; roomCode = m.room; map = m.map;
+      spectating = false;
+      $('specBar').classList.add('hidden');
+      reconnectTries = 0;
+      setSess({ id: m.id, tok: m.tok, room: m.room, ts: Date.now() });
       joinCb && joinCb(true);
       showLobby();
+      break;
+    case 'spectate':
+      myId = m.id; roomCode = m.room; map = m.map;
+      spectating = true;
+      roster = {};
+      m.players.forEach(p => roster[p.id] = p);
+      phase = 'game';
+      buildWorld();
+      showGame();
+      $('specBar').classList.remove('hidden');
+      $('stick').classList.add('hidden');
+      ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost', 'btnCrouch'].forEach(b => $(b).classList.add('hidden'));
+      AudioFX.unlock(); AudioFX.ambientStart();
+      joinCb && joinCb(true);
       break;
     case 'error':
       if (m.msg === 'room_not_found') { $('joinErr').textContent = 'الكود ده مش موجود.. اتأكد منه'; joinCb && joinCb(false); }
       if (m.msg === 'room_full') { $('joinErr').textContent = 'الأوضة مليانة (١٠ لاعيبة)'; joinCb && joinCb(false); }
+      if (m.msg === 'rejoin_failed') {
+        rejoinFailed = true;
+        setSess(null);
+        phase = 'join';
+        show('join');
+        $('joinErr').textContent = 'الجلسة خلصت.. ادخل من الأول';
+      }
       break;
     case 'lobby':
       phase = 'lobby';
@@ -255,6 +301,9 @@ function handle(m, joinCb) {
       break;
     case 'begin':
       phase = 'game';
+      spectating = false;
+      $('specBar').classList.add('hidden');
+      reconnectTries = 0;
       roster = {};
       m.players.forEach(p => roster[p.id] = p);
       map = m.map;
@@ -316,6 +365,8 @@ function handle(m, joinCb) {
       if (m.kind === 'exposed') toast('🚨 ' + m.by + ' كشف ' + m.on + ' والكنز كان معاه!');
       if (m.kind === 'shielded') toast('🛡️ درع ' + m.on + ' صدّ كشف ' + m.by + '!');
       if (m.kind === 'treasure_moved') toast('👀 حسيت بحركة.. الكنز غيّر مكانه!');
+      if (m.kind === 'gone') toast('🔌 ' + m.name + ' قطع.. مستنيينه يرجع');
+      if (m.kind === 'back') toast('🔄 ' + m.name + ' رجع تاني!');
       if (m.kind === 'exposed' || m.kind === 'treasure_moved') alarmBoost = 1;
       if (m.kind === 'exposed') { AudioFX.buzzer(); shake = Math.max(shake, 0.8); }
       if (m.kind === 'wrong_expose') { AudioFX.fail(); shake = Math.max(shake, 0.4); }
@@ -361,7 +412,7 @@ function show(id) {
   if (!inGame) ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost', 'btnCrouch', 'btnMute'].forEach(b => $(b).classList.add('hidden'));
   else $('btnMute').classList.remove('hidden');
 }
-function showLobby() { show('lobby'); $('endOverlay').classList.add('hidden'); }
+function showLobby() { show('lobby'); $('endOverlay').classList.add('hidden'); $('specBar').classList.add('hidden'); }
 function showGame() { show(null); onResize(); }
 
 function renderLobby(m) {
@@ -378,6 +429,9 @@ function renderLobby(m) {
   ).join('');
   $('avRow').querySelectorAll('button').forEach(b => b.onclick = () => ws && ws.send(JSON.stringify({ t: 'avatar', a: +b.dataset.a })));
   const amHost = m.players.find(p => p.id === myId && p.host);
+  document.querySelectorAll('.lvlbtn').forEach(b =>
+    b.classList.toggle('sel', b.dataset.l === (m.botLevel || 'normal')));
+  $('botLvlRow').style.opacity = amHost ? '1' : '.55';
   $('btnStart').style.display = amHost ? '' : 'none';
   $('btnAddBot').style.display = amHost ? '' : 'none';
   $('btnRmBot').style.display = amHost ? '' : 'none';
@@ -391,6 +445,7 @@ function showEnd(m) {
   phase = 'end';
   carrier = false;
   $('secret').classList.add('hidden');
+  $('specBar').classList.add('hidden');
   ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost', 'btnCrouch', 'btnMute'].forEach(b => $(b).classList.add('hidden'));
   const title = $('endTitle'), detail = $('endDetail');
   if (m.reason === 'deposit') {
@@ -1542,6 +1597,11 @@ function tick() {
 
   // camera: free orbit (right-thumb drag), pitch-adjustable, no auto-turn
   const mine = state.players.find(p => p.id === myId);
+  if (!mine && phase === 'game' && map) {
+    const cx = map.w / 2, cz = map.h / 2, ang = now / 16000;
+    camera.position.set(cx + Math.cos(ang) * 750, 640, cz + Math.sin(ang) * 750);
+    camera.lookAt(cx, 0, cz);
+  }
   if (mine && mine.x > -100) {
     const pm = playerMeshes.get(myId);
     if (camYaw === null) camYaw = pm ? pm.rotation.y : Math.PI;
@@ -1766,11 +1826,23 @@ $('btnExpose').addEventListener('click', () => ws && ws.readyState === 1 && ws.s
 $('btnBuild').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'build' })));
 $('btnGhost').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'ghost' })));
 let crouchOn = false;
+document.querySelectorAll('.lvlbtn').forEach(b => b.addEventListener('click', () => {
+  if (ws) ws.send(JSON.stringify({ t: 'botlevel', level: b.dataset.l }));
+}));
 $('linkHelp').addEventListener('click', () => $('helpOverlay').classList.remove('hidden'));
 $('btnHelp').addEventListener('click', () => $('helpOverlay').classList.remove('hidden'));
 $('btnCloseHelp').addEventListener('click', () => $('helpOverlay').classList.add('hidden'));
 
 // first-games coach hints (short toasts, first 2 rounds only)
+// resume a dropped session (page refresh / app switch) without lifting a finger
+(function autoRejoin() {
+  const s = getSess();
+  if (!s || !s.id || !s.tok || !s.room) return;
+  if (Date.now() - (s.ts || 0) > 30 * 60 * 1000) { setSess(null); return; }
+  $('joinErr').textContent = 'بنرجعك للعبة... 🔄';
+  connect('', '', () => {}, { id: s.id, tok: s.tok, room: s.room });
+})();
+
 function coachHints() {
   let seen = 0;
   try { seen = +(localStorage.getItem('lk_games') || 0); localStorage.setItem('lk_games', String(seen + 1)); } catch (e) { }
