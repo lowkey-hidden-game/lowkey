@@ -104,7 +104,7 @@ async function goto(c, tx, ty, r, timeoutMs) {
     if (!s) return false;
     const pa = s.players.find(p => p.id === A.id);
     return pa && pa.x > 0;
-  }, 6000, 'A visible again');
+  }, 17000, 'A visible again');
   check('ghost expires, carrier visible again', true);
 
   // ghost button is once per round

@@ -45,7 +45,7 @@ const TICK_MS = 50;
 const PLAYER_SPEED = 170;
 const CARRIER_SPEED = 148;
 const SPEED_BOOST = 1.45;
-const SPEED_BOOST_SECONDS = 6;
+const SPEED_BOOST_SECONDS = 12;
 const PLAYER_R = 14;
 const SEARCH_RADIUS = 80;
 const SEARCH_TIME = 2.5;
@@ -62,9 +62,9 @@ const WALL_SECONDS = Number(process.env.WALL_SECONDS) || 15;
 const WALL_COOLDOWN = 4;
 const WALLS_PER_ROUND = 3;
 const WALL_SIZE = 64;
-const GHOST_SECONDS = 2.5;
-const GOGGLES_SECONDS = 6;
-const REVEAL_SECONDS = 4;
+const GHOST_SECONDS = 12;
+const GOGGLES_SECONDS = 12;
+const REVEAL_SECONDS = 12;
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 10;
 const ENDED_BACK_TO_LOBBY_MS = 9000;
@@ -598,7 +598,7 @@ function addBot(room) {
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon' };
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') { res.writeHead(200); res.end('ok v3.1'); return; }
+  if (req.url === '/health') { res.writeHead(200); res.end('ok v3.2'); return; }
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   if (urlPath === '/classic') urlPath = '/classic.html';

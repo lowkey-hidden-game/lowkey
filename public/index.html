@@ -193,11 +193,11 @@ function handle(m, joinCb) {
       }
       break;
     case 'power':
-      if (m.type === 'speed') toast('⚡ سرعة خارقة ٦ ثواني!');
+      if (m.type === 'speed') toast('⚡ سرعة خارقة ١٢ ثانية!');
       if (m.type === 'shield') toast('🛡️ درع! بيحميك من كشف واحد');
       if (m.type === 'reveal') toast('👁️ شفت الحرامي! وراك وراه');
       if (m.type === 'ghost') toast('👻 اختفيت عن الأنظار لحظات!');
-      if (m.type === 'goggles') toast('🥽 نظارة الرؤية: شايف المختفيين ٦ ثواني!');
+      if (m.type === 'goggles') toast('🥽 نظارة الرؤية: شايف المختفيين ١٢ ثانية!');
       buzz(60);
       break;
     case 'reveal':
@@ -289,6 +289,9 @@ let vaultMesh = null, vaultGlow = null;
 let glFailed = false;
 
 const POW_COLORS = { speed: 0xffd34d, shield: 0x6bb8ff, reveal: 0xff8ad4, ghost: 0xb48cff, goggles: 0x7ee0ff };
+const SKIN_TONES = [0xffe0bd, 0xf1c27d, 0xc68642, 0x8d5524];
+const HAIR_COLORS = [0x2b2b2b, 0x5a3a1e, 0x8a4b12, 0xd9c07a, 0x777777, 0xb03030];
+const PANTS_COLORS = [0x2f3a56, 0x3a3a3a, 0x4a3828, 0x274156, 0x555f6e, 0x63342e];
 
 function initGL() {
   if (renderer || glFailed) return !glFailed;
@@ -319,13 +322,26 @@ function fallback2d() {
 }
 
 function floorTexture() {
+  // worn concrete with painted warehouse lanes
   const c = document.createElement('canvas');
   c.width = 512; c.height = 320;
   const g = c.getContext('2d');
-  g.fillStyle = '#1b2745'; g.fillRect(0, 0, 512, 320);
-  g.strokeStyle = 'rgba(140,170,255,.12)'; g.lineWidth = 2;
-  for (let x = 0; x <= 512; x += 32) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 320); g.stroke(); }
-  for (let y = 0; y <= 320; y += 32) { g.beginPath(); g.moveTo(0, y); g.lineTo(512, y); g.stroke(); }
+  g.fillStyle = '#3d4149'; g.fillRect(0, 0, 512, 320);
+  // stains
+  for (let i = 0; i < 40; i++) {
+    g.fillStyle = 'rgba(0,0,0,' + (0.03 + Math.random() * 0.06) + ')';
+    g.beginPath(); g.arc(Math.random() * 512, Math.random() * 320, 8 + Math.random() * 30, 0, 7); g.fill();
+  }
+  // expansion joints
+  g.strokeStyle = 'rgba(0,0,0,.22)'; g.lineWidth = 2;
+  for (let x = 0; x <= 512; x += 64) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 320); g.stroke(); }
+  for (let y = 0; y <= 320; y += 64) { g.beginPath(); g.moveTo(0, y); g.lineTo(512, y); g.stroke(); }
+  // yellow safety lanes
+  g.strokeStyle = 'rgba(230,190,60,.35)'; g.lineWidth = 5;
+  g.setLineDash([24, 18]);
+  g.beginPath(); g.moveTo(0, 160); g.lineTo(512, 160); g.stroke();
+  g.beginPath(); g.moveTo(256, 0); g.lineTo(256, 320); g.stroke();
+  g.setLineDash([]);
   const t = new THREE.CanvasTexture(c);
   return t;
 }
@@ -348,55 +364,98 @@ function nameSprite(text, color) {
 
 function makePlayerMesh(p) {
   const info = roster[p.id] || {};
-  const color = AV_COLORS[(info.avatar !== undefined ? info.avatar : 0) % AV_COLORS.length];
+  const ai = info.avatar !== undefined ? info.avatar : 0;
+  const skin = SKIN_TONES[ai % SKIN_TONES.length];
+  const hairCol = HAIR_COLORS[(ai * 2 + 1) % HAIR_COLORS.length];
+  const shirt = AV_COLORS[ai % AV_COLORS.length];
+  const pants = PANTS_COLORS[(ai * 3 + 2) % PANTS_COLORS.length];
+  const hairStyle = ai % 4; // 0 cap, 1 flat, 2 spiky, 3 long
+
   const grp = new THREE.Group();
-  const bodyMat = new THREE.MeshLambertMaterial({ color });
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(13, 15, 30, 10), bodyMat);
-  body.position.y = 15;
-  grp.add(body);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(10, 10, 8), new THREE.MeshLambertMaterial({ color: 0xffe0bd }));
-  head.position.y = 40;
+  const mats = [];
+  const M = (color) => { const m = new THREE.MeshLambertMaterial({ color }); mats.push(m); return m; };
+
+  // legs (pivot at hip for walk swing)
+  const legGeo = new THREE.BoxGeometry(7, 16, 8);
+  const legL = new THREE.Group(); legL.position.set(-4.5, 17, 0);
+  const legLm = new THREE.Mesh(legGeo, M(pants)); legLm.position.y = -8; legL.add(legLm); grp.add(legL);
+  const legR = new THREE.Group(); legR.position.set(4.5, 17, 0);
+  const legRm = new THREE.Mesh(legGeo, M(pants)); legRm.position.y = -8; legR.add(legRm); grp.add(legR);
+
+  // torso
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(20, 18, 11), M(shirt));
+  torso.position.y = 26;
+  grp.add(torso);
+
+  // arms (pivot at shoulder)
+  const armGeo = new THREE.BoxGeometry(5.5, 15, 6.5);
+  const armL = new THREE.Group(); armL.position.set(-13, 33, 0);
+  const armLm = new THREE.Mesh(armGeo, M(shirt)); armLm.position.y = -7; armL.add(armLm); grp.add(armL);
+  const armR = new THREE.Group(); armR.position.set(13, 33, 0);
+  const armRm = new THREE.Mesh(armGeo, M(shirt)); armRm.position.y = -7; armR.add(armRm); grp.add(armR);
+
+  // head
+  const head = new THREE.Mesh(new THREE.SphereGeometry(8.5, 12, 10), M(skin));
+  head.position.y = 42;
   grp.add(head);
-  // nose to show facing
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(4, 8, 6), new THREE.MeshLambertMaterial({ color: 0xffe0bd }));
+  // nose (facing indicator)
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(2.2, 4.5, 6), M(skin));
   nose.rotation.x = Math.PI / 2;
-  nose.position.set(0, 40, 12);
+  nose.position.set(0, 41.5, 9.5);
   grp.add(nose);
+  // hair
+  if (hairStyle === 0 || hairStyle === 3) {
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(9.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M(hairCol));
+    cap.position.y = 43;
+    grp.add(cap);
+    if (hairStyle === 3) {
+      const back = new THREE.Mesh(new THREE.BoxGeometry(15, 13, 4), M(hairCol));
+      back.position.set(0, 38, -8.5);
+      grp.add(back);
+    }
+  } else if (hairStyle === 1) {
+    const flat = new THREE.Mesh(new THREE.BoxGeometry(16, 4.5, 16), M(hairCol));
+    flat.position.y = 48;
+    grp.add(flat);
+  } else {
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(8.5, 9, 8), M(hairCol));
+    spike.position.y = 50;
+    grp.add(spike);
+  }
+
   const label = nameSprite((AVATARS[info.avatar] || '') + ' ' + (info.name || '?'), p.id === myId ? '#7ef0c1' : '#ffb98a');
-  label.position.y = 66;
+  label.position.y = 68;
   grp.add(label);
+
   // search ring
   const ring = new THREE.Mesh(new THREE.TorusGeometry(24, 3, 6, 20), new THREE.MeshBasicMaterial({ color: 0xffd34d }));
   ring.rotation.x = Math.PI / 2;
   ring.position.y = 2;
   ring.visible = false;
   grp.add(ring);
-  grp.userData.ring = ring;
   // reveal marker
   const rmark = new THREE.Mesh(new THREE.TorusGeometry(30, 4, 6, 20), new THREE.MeshBasicMaterial({ color: 0xff4d4d }));
   rmark.rotation.x = Math.PI / 2;
-  rmark.position.y = 56;
+  rmark.position.y = 58;
   rmark.visible = false;
   grp.add(rmark);
-  grp.userData.rmark = rmark;
   // ice block for frozen
-  const ice = new THREE.Mesh(new THREE.BoxGeometry(42, 54, 42), new THREE.MeshLambertMaterial({ color: 0x9ecbff, transparent: true, opacity: 0.45 }));
-  ice.position.y = 27;
+  const ice = new THREE.Mesh(new THREE.BoxGeometry(44, 56, 44), new THREE.MeshLambertMaterial({ color: 0x9ecbff, transparent: true, opacity: 0.45 }));
+  ice.position.y = 28;
   ice.visible = false;
   grp.add(ice);
-  grp.userData.ice = ice;
   // progress bar (search/deposit)
   const barBg = new THREE.Mesh(new THREE.BoxGeometry(50, 6, 2), new THREE.MeshBasicMaterial({ color: 0x22304f }));
-  barBg.position.y = 84;
+  barBg.position.y = 80;
   barBg.visible = false;
   grp.add(barBg);
   const barFg = new THREE.Mesh(new THREE.BoxGeometry(50, 6, 2), new THREE.MeshBasicMaterial({ color: 0x7ef0c1 }));
-  barFg.position.y = 84;
+  barFg.position.y = 80;
   barFg.visible = false;
   grp.add(barFg);
-  grp.userData.barBg = barBg;
-  grp.userData.barFg = barFg;
-  grp.userData.bodyMat = bodyMat;
+
+  grp.userData = { ring, rmark, ice, barBg, barFg, mats, legL, legR, armL, armR, walkPhase: 0 };
+  grp.rotation.y = Math.PI;
   return grp;
 }
 
@@ -440,43 +499,130 @@ function buildWorld() {
   floor.position.set(map.w / 2, 0, map.h / 2);
   scene.add(floor);
 
-  const wallMat = new THREE.MeshLambertMaterial({ color: 0x3a4a6e });
-  const capMat = new THREE.MeshLambertMaterial({ color: 0x4d618c });
-  for (const w of map.walls) {
-    const h = 55;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w.w, h, w.h), wallMat);
-    m.position.set(w.x + w.w / 2, h / 2, w.y + w.h / 2);
-    scene.add(m);
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(w.w + 4, 6, w.h + 4), capMat);
-    cap.position.set(w.x + w.w / 2, h + 3, w.y + w.h / 2);
-    scene.add(cap);
-    wallMeshes.push(m, cap);
-  }
-
-  // crates
-  const crateMat = new THREE.MeshLambertMaterial({ color: 0xb97f3e });
-  map.spots.forEach((s, i) => {
-    const id = s.id !== undefined ? s.id : i;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(40, 40, 40), crateMat.clone());
-    m.position.set(s.x, 20, s.y);
-    m.rotation.y = (i % 4) * 0.4;
-    m.userData.spotId = id;
-    scene.add(m);
-    spotMeshes.push(m);
+  // warehouse pallet racks for interior walls, metal panels for the outer walls
+  const panelMat = new THREE.MeshLambertMaterial({ color: 0x5a6472 });
+  const postMat = new THREE.MeshLambertMaterial({ color: 0x37404e });
+  const beamMat = new THREE.MeshLambertMaterial({ color: 0xd0681c });
+  const goodsCols = [0x8a6f4d, 0x6b7f5e, 0x7d6a8a, 0x5e6e80, 0x96793f];
+  map.walls.forEach((w, wi) => {
+    const isBorder = w.x <= 0 || w.y <= 0 || w.x + w.w >= map.w || w.y + w.h >= map.h;
+    if (isBorder) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w.w, 120, w.h), panelMat);
+      m.position.set(w.x + w.w / 2, 60, w.y + w.h / 2);
+      scene.add(m);
+      wallMeshes.push(m);
+      return;
+    }
+    const horizontal = w.w >= w.h;
+    const len = horizontal ? w.w : w.h;
+    const depth = Math.max(horizontal ? w.h : w.w, 26);
+    const H = 96;
+    // posts
+    const nPosts = Math.max(2, Math.round(len / 90));
+    for (let i = 0; i < nPosts; i++) {
+      const t = i / (nPosts - 1);
+      const px = horizontal ? w.x + t * len : w.x + w.w / 2;
+      const pz = horizontal ? w.y + w.h / 2 : w.y + t * len;
+      const post = new THREE.Mesh(new THREE.BoxGeometry(7, H, 7), postMat);
+      post.position.set(px - (horizontal ? w.w / 2 - 4 : 0) * 0 + (horizontal ? (t - 0.5) * 0 : 0), H / 2, pz);
+      post.position.set(px, H / 2, pz);
+      scene.add(post);
+      wallMeshes.push(post);
+    }
+    // beams (2 levels)
+    for (const lvl of [34, 68]) {
+      const beam = new THREE.Mesh(
+        new THREE.BoxGeometry(horizontal ? len : 8, 7, horizontal ? 8 : len), beamMat);
+      beam.position.set(w.x + w.w / 2, lvl, w.y + w.h / 2);
+      scene.add(beam);
+      wallMeshes.push(beam);
+    }
+    // goods on shelves
+    let s = wi * 31 + 5;
+    const rr = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    const nGoods = Math.floor(len / 110);
+    for (let i = 0; i < nGoods; i++) {
+      const lvl = rr() > 0.5 ? 41 : 75;
+      const gw = 22 + rr() * 26, gh = 16 + rr() * 14;
+      const t = (i + 0.5) / nGoods;
+      const gx = horizontal ? w.x + t * len : w.x + w.w / 2;
+      const gz = horizontal ? w.y + w.h / 2 : w.y + t * len;
+      const good = new THREE.Mesh(new THREE.BoxGeometry(horizontal ? gw : depth - 6, gh, horizontal ? depth - 6 : gw),
+        new THREE.MeshLambertMaterial({ color: goodsCols[Math.floor(rr() * goodsCols.length)] }));
+      good.position.set(gx, lvl + gh / 2, gz);
+      scene.add(good);
+      wallMeshes.push(good);
+    }
   });
 
-  // vault
+  // hiding spots: lockers, barrels, cabinets, pallet stacks (no cardboard crates)
+  map.spots.forEach((s, i) => {
+    const id = s.id !== undefined ? s.id : i;
+    const grp = new THREE.Group();
+    const kind = i % 4;
+    if (kind === 0) {
+      // locker
+      const body = new THREE.Mesh(new THREE.BoxGeometry(30, 62, 30), new THREE.MeshLambertMaterial({ color: 0x4f6d8c }));
+      body.position.y = 31; grp.add(body);
+      const door = new THREE.Mesh(new THREE.BoxGeometry(24, 54, 2), new THREE.MeshLambertMaterial({ color: 0x415a75 }));
+      door.position.set(0, 30, 15); grp.add(door);
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(14, 2, 1), new THREE.MeshLambertMaterial({ color: 0x2c3c50 }));
+      vent.position.set(0, 48, 16); grp.add(vent);
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(3, 6, 2), new THREE.MeshLambertMaterial({ color: 0xd8d8d8 }));
+      handle.position.set(8, 30, 16); grp.add(handle);
+    } else if (kind === 1) {
+      // barrel
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 36, 12), new THREE.MeshLambertMaterial({ color: 0x9c4a2f }));
+      body.position.y = 18; grp.add(body);
+      for (const ry of [8, 28]) {
+        const rib = new THREE.Mesh(new THREE.TorusGeometry(15.4, 1.4, 6, 16), new THREE.MeshLambertMaterial({ color: 0x6e3320 }));
+        rib.rotation.x = Math.PI / 2; rib.position.y = ry; grp.add(rib);
+      }
+    } else if (kind === 2) {
+      // cabinet
+      const body = new THREE.Mesh(new THREE.BoxGeometry(40, 30, 32), new THREE.MeshLambertMaterial({ color: 0xb8a888 }));
+      body.position.y = 15; grp.add(body);
+      const drawer = new THREE.Mesh(new THREE.BoxGeometry(34, 10, 2), new THREE.MeshLambertMaterial({ color: 0x9c8c6c }));
+      drawer.position.set(0, 18, 16); grp.add(drawer);
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(2, 6, 6), new THREE.MeshLambertMaterial({ color: 0x554d3a }));
+      knob.position.set(0, 18, 18); grp.add(knob);
+    } else {
+      // pallet stack with tarp
+      const pallet = new THREE.Mesh(new THREE.BoxGeometry(38, 6, 38), new THREE.MeshLambertMaterial({ color: 0x8a6f4d }));
+      pallet.position.y = 3; grp.add(pallet);
+      const load = new THREE.Mesh(new THREE.BoxGeometry(34, 22, 34), new THREE.MeshLambertMaterial({ color: 0x6b7f5e }));
+      load.position.y = 17; grp.add(load);
+      const tarp = new THREE.Mesh(new THREE.BoxGeometry(36, 5, 36), new THREE.MeshLambertMaterial({ color: 0x51683f }));
+      tarp.position.y = 30; grp.add(tarp);
+    }
+    grp.position.set(s.x, 0, s.y);
+    grp.rotation.y = (i % 4) * 0.4;
+    grp.userData.spotId = id;
+    grp.userData.baseY = 0;
+    grp.userData.mats = grp.children.map(ch => ch.material);
+    scene.add(grp);
+    spotMeshes.push(grp);
+  });
+
+  // vault: a big floor safe
   const v = map.vault;
-  vaultMesh = new THREE.Mesh(new THREE.BoxGeometry(70, 60, 70), new THREE.MeshLambertMaterial({ color: 0x2f8f5b, emissive: 0x1d5c39 }));
-  vaultMesh.position.set(v.x + v.w / 2, 30, v.y + v.h / 2);
+  vaultMesh = new THREE.Mesh(new THREE.BoxGeometry(64, 66, 64), new THREE.MeshLambertMaterial({ color: 0x37424e }));
+  vaultMesh.position.set(v.x + v.w / 2, 33, v.y + v.h / 2);
   scene.add(vaultMesh);
+  const safeDoor = new THREE.Mesh(new THREE.BoxGeometry(48, 52, 4), new THREE.MeshLambertMaterial({ color: 0x4a5866 }));
+  safeDoor.position.set(v.x + v.w / 2, 30, v.y + v.h / 2 - 33);
+  scene.add(safeDoor);
+  const dial = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 3, 12), new THREE.MeshLambertMaterial({ color: 0xd8d8d8 }));
+  dial.rotation.x = Math.PI / 2;
+  dial.position.set(v.x + v.w / 2, 34, v.y + v.h / 2 - 36);
+  scene.add(dial);
   vaultGlow = new THREE.Mesh(new THREE.TorusGeometry(90, 6, 8, 28), new THREE.MeshBasicMaterial({ color: 0x7ef0c1, transparent: true, opacity: 0.5 }));
   vaultGlow.rotation.x = Math.PI / 2;
   vaultGlow.position.set(v.x + v.w / 2, 4, v.y + v.h / 2);
   scene.add(vaultGlow);
 }
 
-let camPos = null;
+let camPos = null, camYaw = null;
 function tick() {
   requestAnimationFrame(tick);
   if (!renderer || (phase !== 'game' && phase !== 'end')) return;
@@ -492,18 +638,34 @@ function tick() {
     m.visible = true;
     m.position.x = p.x;
     m.position.z = p.y;
-    // face movement direction
+    // face movement direction + walk animation
     if (m._lx !== undefined) {
       const dx = p.x - m._lx, dy = p.y - m._ly;
-      if (Math.abs(dx) + Math.abs(dy) > 0.5) m.rotation.y = Math.atan2(dx, dy);
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0.5) {
+        m.rotation.y = Math.atan2(dx, dy);
+        m.userData.walkPhase += dist * 0.09;
+        const swing = Math.sin(m.userData.walkPhase) * Math.min(1, dist * 0.5) * 0.6;
+        m.userData.legL.rotation.x = swing;
+        m.userData.legR.rotation.x = -swing;
+        m.userData.armL.rotation.x = -swing * 0.8;
+        m.userData.armR.rotation.x = swing * 0.8;
+      } else {
+        m.userData.legL.rotation.x *= 0.8;
+        m.userData.legR.rotation.x *= 0.8;
+        m.userData.armL.rotation.x *= 0.8;
+        m.userData.armR.rotation.x *= 0.8;
+      }
     }
     m._lx = p.x; m._ly = p.y;
     m.userData.ring.visible = !!p.s;
     if (p.s) m.userData.ring.rotation.z = now / 300;
     m.userData.ice.visible = !!p.f;
     const ghosted = (p.g === 1) || (p.id === myId && state.me && state.me.ghost);
-    m.userData.bodyMat.transparent = ghosted;
-    m.userData.bodyMat.opacity = ghosted ? 0.35 : 1;
+    for (const mt of m.userData.mats) {
+      mt.transparent = ghosted;
+      mt.opacity = ghosted ? 0.35 : 1;
+    }
     m.userData.rmark.visible = (revealId === p.id && now < revealUntil);
     if (m.userData.rmark.visible) m.userData.rmark.scale.setScalar(1 + 0.1 * Math.sin(now / 150));
     // progress bars
@@ -521,12 +683,16 @@ function tick() {
     if (!seen.has(id)) { scene.remove(m); playerMeshes.delete(id); }
   }
 
-  // crates: searched ones sink and darken
+  // hiding spots: searched ones sink into the floor and darken
   for (const c of spotMeshes) {
     const searched = state.spots.includes(c.userData.spotId);
-    const targetY = searched ? -14 : 20;
+    const targetY = searched ? c.userData.baseY - 40 : c.userData.baseY;
     c.position.y += (targetY - c.position.y) * 0.1;
-    c.material.color.setHex(searched ? 0x4a3c28 : 0xb97f3e);
+    const dim = searched ? 0.35 : 1;
+    if (c.userData.dimmed !== searched) {
+      c.userData.dimmed = searched;
+      for (const mt of c.userData.mats) { mt.transparent = searched; mt.opacity = dim; }
+    }
   }
 
   // dynamic walls
@@ -569,15 +735,22 @@ function tick() {
     vaultGlow.scale.setScalar(1 + 0.06 * Math.sin(now / 400));
   }
 
-  // camera: third-person follow
+  // camera: third-person follow, smoothly swinging behind facing direction
   const mine = state.players.find(p => p.id === myId);
   if (mine && mine.x > -100) {
-    const tx = mine.x, tz = mine.y;
-    if (!camPos) camPos = { x: tx, z: tz };
-    camPos.x += (tx - camPos.x) * 0.12;
-    camPos.z += (tz - camPos.z) * 0.12;
-    camera.position.set(camPos.x, 210, camPos.z + 330);
-    camera.lookAt(camPos.x, 30, camPos.z - 170);
+    const pm = playerMeshes.get(myId);
+    const facing = pm ? pm.rotation.y : Math.PI;
+    if (camYaw === null) camYaw = Math.PI;
+    let diff = facing - camYaw;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    camYaw += diff * 0.06;
+    const fx = Math.sin(camYaw), fz = Math.cos(camYaw);
+    if (!camPos) camPos = { x: mine.x - fx * 330, z: mine.y - fz * 330 };
+    camPos.x += (mine.x - fx * 330 - camPos.x) * 0.1;
+    camPos.z += (mine.y - fz * 330 - camPos.z) * 0.1;
+    camera.position.set(camPos.x, 210, camPos.z);
+    camera.lookAt(mine.x + fx * 60, 30, mine.y + fz * 60);
   }
   renderer.render(scene, camera);
 }
@@ -649,10 +822,19 @@ function setKnob(dx, dy) {
   knob.style.top = (38 + dy * 34) + 'px';
 }
 function sendInput() {
-  const key = sdx.toFixed(2) + ',' + sdy.toFixed(2);
+  // rotate stick input by camera yaw so "up" is always away from the camera
+  let wdx = sdx, wdy = sdy;
+  const yaw = camYaw === null ? Math.PI : camYaw;
+  if (phase === 'game') {
+    wdx = -Math.cos(yaw) * sdx - Math.sin(yaw) * sdy;
+    wdy = Math.sin(yaw) * sdx - Math.cos(yaw) * sdy;
+    const len = Math.hypot(wdx, wdy);
+    if (len > 1) { wdx /= len; wdy /= len; }
+  }
+  const key = wdx.toFixed(2) + ',' + wdy.toFixed(2);
   if (key === lastSent) return;
   lastSent = key;
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'input', dx: sdx, dy: sdy }));
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'input', dx: wdx, dy: wdy }));
 }
 stick.addEventListener('touchstart', e => {
   e.preventDefault();
@@ -692,10 +874,12 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 setInterval(() => {
-  if (stickId !== null) return;
-  const dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
-  const dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
-  sdx = dx; sdy = dy; sendInput();
+  if (stickId === null) {
+    const dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
+    const dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
+    sdx = dx; sdy = dy;
+  }
+  sendInput(); // always re-run: camera rotation changes the world-space mapping even when the stick is held still
 }, 60);
 
 $('btnSearch').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'search' })));
