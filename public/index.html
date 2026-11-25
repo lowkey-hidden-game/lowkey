@@ -336,7 +336,15 @@ function handle(m, joinCb) {
         AudioFX.sting();
         const me0 = state.players && state.players.find(p => p.id === myId);
         if (me0) burst(me0.x, 40, me0.y, 'rgb(255,211,77)', 22, 70, 120, 10);
+      } else {
+        carrier = false;
+        $('secret').classList.add('hidden');
+        toast('💥 اتكشفت والكنز وقع منك! ارفعه تاني بعد ٣ ثواني');
+        AudioFX.fail();
       }
+      break;
+    case 'toast':
+      toast(m.msg);
       break;
     case 'power':
       if (m.type === 'speed') toast('⚡ سرعة خارقة ١٢ ثانية!');
@@ -365,6 +373,8 @@ function handle(m, joinCb) {
       if (m.kind === 'exposed') toast('🚨 ' + m.by + ' كشف ' + m.on + ' والكنز كان معاه!');
       if (m.kind === 'shielded') toast('🛡️ درع ' + m.on + ' صدّ كشف ' + m.by + '!');
       if (m.kind === 'treasure_moved') toast('👀 حسيت بحركة.. الكنز غيّر مكانه!');
+      if (m.kind === 'dropped') { toast('💰 ' + m.by + ' كشف ' + m.on + '.. الكنز على الأرض! اللحقوه'); AudioFX.sting(); shake = Math.max(shake, 0.5); }
+      if (m.kind === 'picked') { toast('✋ ' + m.name + ' خد الكنز!'); AudioFX.tick(); }
       if (m.kind === 'gone') toast('🔌 ' + m.name + ' قطع.. مستنيينه يرجع');
       if (m.kind === 'back') toast('🔄 ' + m.name + ' رجع تاني!');
       if (m.kind === 'exposed' || m.kind === 'treasure_moved') alarmBoost = 1;
@@ -546,7 +556,7 @@ const AudioFX = (() => {
 let renderer = null, scene = null, camera = null;
 let worldBuilt = false;
 let wallMeshes = [], dynWallMeshes = [], spotMeshes = [], powerMeshes = new Map(), playerMeshes = new Map();
-let vaultMesh = null, vaultGlow = null, vaultPillar = null;
+let vaultMesh = null, vaultGlow = null, vaultPillar = null, dropMesh = null;
 let glFailed = false;
 
 const POW_COLORS = { speed: 0xffd34d, shield: 0x6bb8ff, reveal: 0xff8ad4, ghost: 0xb48cff, goggles: 0x7ee0ff };
@@ -1595,6 +1605,27 @@ function tick() {
   }
   if (vaultPillar) vaultPillar.material.opacity = 0.35 + 0.18 * Math.sin(now / 600);
 
+  // dropped treasure: gold chest + pulsing ring where it fell
+  if (phase === 'game' && state.drop) {
+    if (!dropMesh) {
+      dropMesh = new THREE.Group();
+      if (assets.ready && assets.env.Props_Chest) dropMesh.add(normalizedClone(assets.env.Props_Chest, 40));
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(26, 34, 32),
+        new THREE.MeshBasicMaterial({ color: 0xffd34d, transparent: true, opacity: 0.7, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+      ring.rotation.x = -Math.PI / 2; ring.position.y = 3;
+      dropMesh.add(ring);
+      dropMesh.userData.ring = ring;
+      scene.add(dropMesh);
+    }
+    dropMesh.position.set(state.drop.x, 0, state.drop.y);
+    dropMesh.userData.ring.material.opacity = 0.45 + 0.3 * Math.sin(now / 250);
+    dropMesh.rotation.y = now / 900;
+  } else if (dropMesh) {
+    scene.remove(dropMesh);
+    dropMesh = null;
+  }
+
   // camera: free orbit (right-thumb drag), pitch-adjustable, no auto-turn
   const mine = state.players.find(p => p.id === myId);
   if (!mine && phase === 'game' && map) {
@@ -1671,6 +1702,12 @@ function drawMinimap() {
   g.fillRect(v.x * s, v.y * s, v.w * s, v.h * s);
   g.strokeStyle = '#ffd34d'; g.lineWidth = 2;
   g.strokeRect(v.x * s - 1, v.y * s - 1, v.w * s + 2, v.h * s + 2);
+  // dropped treasure: pulsing gold dot
+  if (state.drop) {
+    g.fillStyle = '#ffd34d';
+    g.strokeStyle = 'rgba(0,0,0,.5)'; g.lineWidth = 1.5;
+    g.beginPath(); g.arc(state.drop.x * s, state.drop.y * s, 5, 0, 7); g.fill(); g.stroke();
+  }
   // other players (skip ghosted, same as the 3D view)
   g.fillStyle = '#9fb4ff';
   state.players.forEach(p => {
@@ -1738,7 +1775,7 @@ function updateHud() {
     if (p.id === myId || p.x < -100) continue;
     if (Math.hypot(m.x - p.x, m.y - p.y) < 115) { nearPlayer = true; break; }
   }
-  $('btnExpose').classList.toggle('hidden', !(nearPlayer && !meFrozen));
+  $('btnExpose').classList.toggle('hidden', !(nearPlayer && !meFrozen && !state.drop));
   $('wallCount').textContent = (meInfo.walls || 0).toLocaleString('ar-EG');
   $('btnBuild').classList.toggle('hidden', !((meInfo.walls || 0) > 0 && !meFrozen));
   $('btnGhost').classList.toggle('hidden', !(carrier && meInfo.ghostLeft && !meFrozen));

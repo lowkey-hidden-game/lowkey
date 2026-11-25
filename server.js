@@ -55,6 +55,9 @@ const WRONG_FREEZE = 12;
 const EXPOSE_COOLDOWN = 30;
 const SHIELD_COOLDOWN = 8;
 const DEPOSIT_TIME = 4;
+const DROP_SECONDS = 10;     // unclaimed dropped treasure relocates after this
+const DROP_LOCK_MS = 3000;   // the exposed ex-carrier can't re-pick for 3s
+const DROP_PICK_R = 30;      // walk-over pickup radius
 const ROUND_SECONDS = Number(process.env.ROUND_SECONDS) || 180;
 const MOVE_SECONDS = Number(process.env.MOVE_SECONDS) || 40;      // treasure relocates if unfound
 const POWERUP_SECONDS = Number(process.env.POWERUP_SECONDS) || 22; // spawn cadence
@@ -105,6 +108,7 @@ function makeRoom(code) {
     powerSeq: 0,
     powerups: [],
     dynWalls: [],
+    dropped: null,
     wallSeq: 0,
     botSeq: 0,
     endTimer: null,
@@ -177,6 +181,7 @@ function startRound(room) {
   room.powerAt = Date.now() + 3000; // first power-up early
   room.powerups = [];
   room.dynWalls = [];
+  room.dropped = null;
   let i = 0;
   for (const p of room.players.values()) {
     p.carrier = false;
@@ -335,8 +340,14 @@ function tryExpose(room, p) {
     return;
   }
   if (target.carrier) {
-    broadcast(room, { t: 'event', kind: 'exposed', by: p.name, on: target.name });
-    endRound(room, p.id, 'exposed');
+    target.carrier = false;
+    room.dropped = { x: target.x, y: target.y, at: now, by: target.id, until: now + DROP_LOCK_MS };
+    sendTo(target, { t: 'secret', carrier: false });
+    broadcast(room, { t: 'event', kind: 'dropped', by: p.name, on: target.name });
+  } else if (room.dropped) {
+    // no carrier on the field: exposing is pointless, don't punish it
+    p.exposeCdUntil = now + 3000;
+    sendTo(p, { t: 'toast', msg: 'مفيش حرامي دلوقتي.. اللحق الكنز على الأرض!' });
   } else {
     p.frozenUntil = now + WRONG_FREEZE * 1000;
     p.exposeCdUntil = now + EXPOSE_COOLDOWN * 1000;
@@ -424,6 +435,18 @@ function tick(room, dt) {
     room.moveAt = now + MOVE_SECONDS * 1000;
   }
 
+  // dropped treasure: unclaimed for 10s -> back into an unsearched spot
+  if (room.dropped && now - room.dropped.at > DROP_SECONDS * 1000) {
+    const unsearched = MAP.spots.filter(s => !room.searched.has(s.id));
+    if (unsearched.length) {
+      room.treasureSpot = unsearched[crypto.randomInt(unsearched.length)].id;
+      room.dropped = null;
+      broadcast(room, { t: 'event', kind: 'treasure_moved' });
+    } else {
+      room.dropped.at = now; // nowhere left to hide it; it stays on the ground
+    }
+  }
+
   // power-up spawns
   if (now >= room.powerAt) {
     spawnPowerup(room);
@@ -433,6 +456,16 @@ function tick(room, dt) {
   for (const p of room.players.values()) {
     if (p.bot) botThink(room, p, dt);
     movePlayer(room, p, dt);
+
+    // dropped treasure pickup: walk over it (the one who dropped it waits 3s)
+    if (room.dropped && !p.carrier && !(room.dropped.by === p.id && now < room.dropped.until)
+        && Math.hypot(p.x - room.dropped.x, p.y - room.dropped.y) < DROP_PICK_R) {
+      room.dropped = null;
+      p.carrier = true;
+      p.channel = null; p.searchProg = 0;
+      sendTo(p, { t: 'secret', carrier: true });
+      broadcast(room, { t: 'event', kind: 'picked', name: p.name });
+    }
 
     // power-up pickup
     for (let i = room.powerups.length - 1; i >= 0; i--) {
@@ -512,6 +545,7 @@ function tick(room, dt) {
         };
       }),
       spots: [...room.searched],
+      drop: room.dropped ? { x: Math.round(room.dropped.x), y: Math.round(room.dropped.y), ttl: Math.max(0, Math.ceil((DROP_SECONDS * 1000 - (now - room.dropped.at)) / 1000)) } : null,
       walls: room.dynWalls.map(w => ({ x: w.x, y: w.y, w: w.w, h: w.h, ttl: Math.ceil((w.expiresAt - now) / 1000) })),
       powers: room.powerups,
       me: {
@@ -571,7 +605,9 @@ function botThink(room, p, dt) {
     if (d < pud) { pud = d; pu = q; }
   }
 
-  if (pu) {
+  if (room.dropped && !(room.dropped.by === p.id && now < room.dropped.until)) {
+    tx = room.dropped.x; ty = room.dropped.y;
+  } else if (pu) {
     tx = pu.x; ty = pu.y;
   } else if (p.carrier) {
     const { other, dist } = nearestOther(room, p);
@@ -652,7 +688,7 @@ function addBot(room) {
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') { res.writeHead(200); res.end('ok v4.4'); return; }
+  if (req.url === '/health') { res.writeHead(200); res.end('ok v4.5'); return; }
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   if (urlPath === '/classic') urlPath = '/classic.html';
@@ -730,7 +766,8 @@ function handleConnection(socket) {
     if (!p.gone) return; // rejoined during the grace period
     room.players.delete(p.id);
     if (p.carrier && room.state === 'playing') {
-      endRound(room, null, 'carrier_left');
+      room.dropped = { x: p.x, y: p.y, at: Date.now(), by: p.id, until: 0 };
+      broadcast(room, { t: 'event', kind: 'dropped', by: p.name, on: p.name });
     }
     const anyHuman = [...room.players.values()].some(q => !q.bot && !q.gone) || room.spectators.size > 0;
     if (room.players.size === 0 || !anyHuman) {
