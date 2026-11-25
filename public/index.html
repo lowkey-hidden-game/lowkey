@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#10141f">
+<link rel="icon" href="data:,">
+<title>Lowkey</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; background: #10141f; color: #eef2ff;
+    font-family: Tahoma, Arial, sans-serif; touch-action: none; overscroll-behavior: none; }
+  .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 14px; padding: 24px; text-align: center; }
+  h1 { font-size: 34px; color: #ffd34d; }
+  h2 { font-size: 22px; color: #ffd34d; }
+  .sub { color: #9fb0d0; font-size: 15px; line-height: 1.7; max-width: 320px; }
+  input { width: 240px; padding: 12px; font-size: 18px; text-align: center; border-radius: 10px;
+    border: 2px solid #2c3a5e; background: #171e30; color: #fff; outline: none; }
+  input:focus { border-color: #ffd34d; }
+  button { font-family: inherit; cursor: pointer; border: none; border-radius: 12px;
+    background: #ffd34d; color: #1a1a1a; font-size: 18px; font-weight: bold; padding: 13px 34px; }
+  button:disabled { background: #3a4767; color: #7c8bb0; }
+  button.ghost { background: #232c44; color: #cfe0ff; font-size: 15px; padding: 10px 20px; }
+  #roomCode { font-size: 40px; letter-spacing: 10px; color: #7ef0c1; font-weight: bold; direction: ltr; }
+  #plist { display: flex; flex-direction: column; gap: 6px; min-width: 240px; }
+  .prow { background: #1b2438; border-radius: 8px; padding: 8px 14px; font-size: 16px; display: flex; justify-content: space-between; }
+  .hidden { display: none !important; }
+  canvas { display: block; position: fixed; inset: 0; }
+  #hud { position: fixed; top: 0; left: 0; right: 0; display: flex; justify-content: space-between;
+    padding: 10px 14px; pointer-events: none; font-size: 16px; z-index: 5; }
+  .pill { background: rgba(16,20,31,.75); border-radius: 20px; padding: 6px 14px; }
+  #timer.warn { color: #ff6b6b; }
+  #secret { position: fixed; top: 52px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
+  #secret span { background: linear-gradient(90deg,#ffd34d,#ff9d3d); color: #1a1a1a; font-weight: bold;
+    border-radius: 24px; padding: 9px 22px; font-size: 16px; box-shadow: 0 0 18px rgba(255,211,77,.5); }
+  #toast { position: fixed; bottom: 170px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
+  #toast span { background: rgba(20,26,42,.9); border-radius: 16px; padding: 8px 18px; font-size: 15px; color: #cfe0ff; }
+  .actbtn { position: fixed; z-index: 6; width: 84px; height: 84px; border-radius: 50%; font-size: 17px;
+    padding: 0; box-shadow: 0 4px 14px rgba(0,0,0,.45); }
+  #btnSearch { left: 20px; bottom: 110px; background: #7ef0c1; }
+  #btnExpose { left: 116px; bottom: 40px; background: #ff6b6b; color: #fff; }
+  #stick { position: fixed; z-index: 4; right: 26px; bottom: 60px; width: 130px; height: 130px;
+    border-radius: 50%; background: rgba(255,255,255,.06); border: 2px solid rgba(255,255,255,.15); }
+  #knob { position: absolute; width: 54px; height: 54px; border-radius: 50%;
+    background: rgba(255,255,255,.25); left: 38px; top: 38px; }
+  #endOverlay { position: fixed; inset: 0; background: rgba(10,13,22,.88); z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
+  #endTitle { font-size: 28px; color: #ffd34d; }
+  #endDetail { font-size: 17px; color: #cfe0ff; line-height: 1.8; }
+  #lobbyEvents, #gameEvents { font-size: 14px; color: #9fb0d0; min-height: 20px; }
+</style>
+</head>
+<body>
+
+<div id="join" class="screen">
+  <h1>🫣 Lowkey</h1>
+  <p class="sub">كنز واحد مخبي في المكان.. دوّر عليه، ولما تلاقيه <b>متخليش حد يعرف إنه معاك</b>! وصّله للخزنة من غير ما حد يمسكك واكسب. لو شكيت في حد.. اكشفه!</p>
+  <input id="nameIn" maxlength="14" placeholder="اسمك" autocomplete="off">
+  <input id="codeIn" maxlength="4" placeholder="كود الأوضة (لو معاك)" autocomplete="off" style="text-transform:uppercase">
+  <button id="btnJoin">ادخل / اعمل أوضة</button>
+  <div id="joinErr" style="color:#ff6b6b;font-size:14px"></div>
+</div>
+
+<div id="lobby" class="screen hidden">
+  <h2>الأوضة</h2>
+  <div id="roomCode"></div>
+  <button class="ghost" id="btnShare">📤 ابعت اللينك لصحابك</button>
+  <div id="plist"></div>
+  <div id="lobbyEvents"></div>
+  <div style="display:flex;gap:10px">
+    <button class="ghost" id="btnAddBot">🤖 زوّد بوت</button>
+    <button class="ghost" id="btnRmBot">شيل بوت</button>
+  </div>
+  <button id="btnStart">ابدأ اللعبة 🎮</button>
+  <p class="sub" id="lobbyHint"></p>
+</div>
+
+<canvas id="cv" class="hidden"></canvas>
+
+<div id="hud" class="hidden">
+  <div class="pill" id="timer">3:00</div>
+  <div class="pill" id="scoreline"></div>
+</div>
+<div id="secret" class="hidden"><span>🤫 الكنز معاك! وصّله للخزنة من غير ما حد يشك</span></div>
+<div id="toast" class="hidden"><span id="toastTxt"></span></div>
+<div id="gameEvents" class="hidden" style="position:fixed;top:52px;left:0;right:0;text-align:center;pointer-events:none;z-index:5"></div>
+
+<div id="stick" class="hidden"><div id="knob"></div></div>
+<button id="btnSearch" class="actbtn hidden">🔍<br>دوّر</button>
+<button id="btnExpose" class="actbtn hidden">🫵<br>اكشف</button>
+
+<div id="endOverlay" class="hidden">
+  <div id="endTitle"></div>
+  <div id="endDetail"></div>
+  <button id="btnAgain">ارجعوا للأوضة 🔁</button>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const qs = new URLSearchParams(location.search);
+
+let ws, myId = null, roomCode = null, map = null, roster = {};
+let state = { players: [], spots: [], left: 0 };
+let carrier = false, meFrozen = false;
+let phase = 'join';
+let camX = 0, camY = 0;
+
+function connect(name, code, cb) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(proto + '://' + location.host);
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name, room: code || '' }));
+  ws.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    handle(m, cb);
+  };
+  ws.onclose = () => {
+    if (phase !== 'join') {
+      toast('انقطع الاتصال.. حدّث الصفحة');
+      setTimeout(() => location.reload(), 2500);
+    }
+  };
+}
+
+function handle(m, joinCb) {
+  switch (m.t) {
+    case 'joined':
+      myId = m.id; roomCode = m.room; map = m.map;
+      joinCb && joinCb(true);
+      showLobby();
+      break;
+    case 'error':
+      if (m.msg === 'room_not_found') { $('joinErr').textContent = 'الكود ده مش موجود.. اتأكد منه'; joinCb && joinCb(false); }
+      if (m.msg === 'room_full') { $('joinErr').textContent = 'الأوضة مليانة (١٠ لاعيبة)'; joinCb && joinCb(false); }
+      break;
+    case 'lobby':
+      phase = 'lobby';
+      renderLobby(m);
+      break;
+    case 'begin':
+      phase = 'game';
+      roster = {};
+      m.players.forEach(p => roster[p.id] = p);
+      map = m.map;
+      carrier = false;
+      $('secret').classList.add('hidden');
+      $('endOverlay').classList.add('hidden');
+      showGame();
+      break;
+    case 'state':
+      state = m;
+      updateHud();
+      break;
+    case 'spot':
+      if (!state.spots.includes(m.id)) state.spots.push(m.id);
+      break;
+    case 'empty':
+      toast('فاضي! مفيش هنا حاجة 🕳️');
+      break;
+    case 'secret':
+      if (m.carrier) {
+        carrier = true;
+        $('secret').classList.remove('hidden');
+        buzz([80, 60, 80]);
+      }
+      break;
+    case 'event':
+      if (m.kind === 'wrong_expose') toast('❌ ' + m.by + ' اتهم ' + m.on + ' غلط واتجمد ١٢ ثانية!');
+      if (m.kind === 'exposed') toast('🚨 ' + m.by + ' كشف ' + m.on + ' والكنز كان معاه!');
+      break;
+    case 'end':
+      showEnd(m);
+      break;
+  }
+}
+
+// ---------- screens ----------
+function show(id) {
+  ['join', 'lobby'].forEach(s => $(s).classList.toggle('hidden', s !== id));
+  const inGame = id === null;
+  $('cv').classList.toggle('hidden', !inGame);
+  $('hud').classList.toggle('hidden', !inGame);
+  $('stick').classList.toggle('hidden', !inGame);
+  $('gameEvents').classList.toggle('hidden', !inGame);
+  if (!inGame) { $('btnSearch').classList.add('hidden'); $('btnExpose').classList.add('hidden'); }
+}
+function showLobby() { show('lobby'); $('btnAgain') && $('endOverlay').classList.add('hidden'); }
+function showGame() { show(null); resize(); }
+
+function renderLobby(m) {
+  $('roomCode').textContent = m.room;
+  roster = {};
+  m.players.forEach(p => roster[p.id] = p);
+  $('plist').innerHTML = m.players.map(p =>
+    '<div class="prow"><span>' + (p.host ? '👑 ' : '') + esc(p.name) + '</span><span>🏆 ' + p.wins + '</span></div>'
+  ).join('');
+  const amHost = m.players.find(p => p.id === myId && p.host);
+  $('btnStart').style.display = amHost ? '' : 'none';
+  $('btnAddBot').style.display = amHost ? '' : 'none';
+  $('btnRmBot').style.display = amHost ? '' : 'none';
+  $('btnStart').disabled = !m.canStart;
+  $('lobbyHint').textContent = m.canStart
+    ? 'الهوست يبدأ لما تكونوا جاهزين'
+    : 'محتاجين ' + m.minPlayers + ' لاعيبة على الأقل (البوتات بتحسب).. ابعت اللينك لصحابك!';
+}
+
+function showEnd(m) {
+  phase = 'end';
+  carrier = false;
+  $('secret').classList.add('hidden');
+  $('btnSearch').classList.add('hidden');
+  $('btnExpose').classList.add('hidden');
+  const title = $('endTitle'), detail = $('endDetail');
+  if (m.reason === 'deposit') {
+    title.textContent = '🏆 ' + m.winnerName + ' كسب!';
+    detail.textContent = 'وصّل الكنز للخزنة من غير ما حد يمسكه.. حرامي محترف 🫣';
+  } else if (m.reason === 'exposed') {
+    title.textContent = '🏆 ' + m.winnerName + ' كسب!';
+    detail.textContent = 'كشف ' + (m.carrierName || 'الحرامي') + ' وهو شايل الكنز! عين صقر 🦅';
+  } else if (m.reason === 'timeout') {
+    title.textContent = '⏰ الوقت خلص!';
+    detail.textContent = m.carrierName
+      ? 'الكنز كان مع ' + m.carrierName + ' ومحدش مسكه.. بس ماوصلش الخزنة'
+      : 'محدش لاقى الكنز أصلاً 😅';
+  } else {
+    title.textContent = 'انتهت الجولة';
+    detail.textContent = 'اللي كان معاه الكنز ساب اللعبة';
+  }
+  $('endOverlay').classList.remove('hidden');
+}
+
+// ---------- rendering ----------
+const cv = $('cv'), ctx = cv.getContext('2d');
+let DPR = Math.min(2, window.devicePixelRatio || 1);
+function resize() {
+  cv.width = innerWidth * DPR; cv.height = innerHeight * DPR;
+  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+}
+addEventListener('resize', resize);
+
+function me() { return state.players.find(p => p.id === myId); }
+
+function draw() {
+  requestAnimationFrame(draw);
+  if (phase !== 'game' && phase !== 'end') return;
+  if (!map) return;
+  resizeIfNeeded();
+  ctx.save();
+  ctx.scale(DPR, DPR);
+  ctx.fillStyle = '#10141f';
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
+
+  const m = me();
+  if (m) {
+    camX += ((m.x - innerWidth / 2) - camX) * 0.15;
+    camY += ((m.y - innerHeight / 2) - camY) * 0.15;
+  }
+  camX = Math.max(0, Math.min(map.w - innerWidth, camX));
+  camY = Math.max(0, Math.min(map.h - innerHeight, camY));
+  if (map.w < innerWidth) camX = (map.w - innerWidth) / 2;
+  if (map.h < innerHeight) camY = (map.h - innerHeight) / 2;
+  ctx.translate(-camX, -camY);
+
+  // floor
+  ctx.fillStyle = '#151b2c';
+  ctx.fillRect(0, 0, map.w, map.h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.lineWidth = 1;
+  for (let gx = 0; gx < map.w; gx += 80) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, map.h); ctx.stroke(); }
+  for (let gy = 0; gy < map.h; gy += 80) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(map.w, gy); ctx.stroke(); }
+
+  // vault
+  const v = map.vault;
+  ctx.fillStyle = 'rgba(255,211,77,0.14)';
+  ctx.fillRect(v.x, v.y, v.w, v.h);
+  ctx.strokeStyle = '#ffd34d'; ctx.lineWidth = 3;
+  ctx.setLineDash([10, 8]);
+  ctx.strokeRect(v.x, v.y, v.w, v.h);
+  ctx.setLineDash([]);
+  ctx.font = '34px serif'; ctx.textAlign = 'center';
+  ctx.fillText('🏦', v.x + v.w / 2, v.y + v.h / 2 + 4);
+  ctx.font = 'bold 16px Tahoma'; ctx.fillStyle = '#ffd34d';
+  ctx.fillText('الخزنة', v.x + v.w / 2, v.y + v.h / 2 + 32);
+
+  // deposit progress ring for carrier
+  if (carrier && m && inVaultMe(m)) {
+    // drawn below with player ring using depositProgress estimate
+  }
+
+  // spots
+  for (const s of map.spots) {
+    const searched = state.spots.includes(s.id);
+    ctx.globalAlpha = searched ? 0.25 : 1;
+    ctx.fillStyle = '#8a6134';
+    roundRect(s.x - 20, s.y - 20, 40, 40, 6); ctx.fill();
+    ctx.strokeStyle = '#5d3f1e'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(s.x - 16, s.y - 16); ctx.lineTo(s.x + 16, s.y + 16);
+    ctx.moveTo(s.x + 16, s.y - 16); ctx.lineTo(s.x - 16, s.y + 16); ctx.stroke();
+    ctx.globalAlpha = 1;
+    if (!searched) {
+      ctx.font = '18px serif'; ctx.fillText('❓', s.x, s.y - 28);
+    }
+  }
+
+  // walls
+  ctx.fillStyle = '#2c3a5e';
+  for (const w of map.walls) { roundRect(w.x, w.y, w.w, w.h, 4); ctx.fill(); }
+
+  // players
+  for (const p of state.players) {
+    const info = roster[p.id] || { name: '?', bot: false };
+    const isMe = p.id === myId;
+    // search pulse
+    if (p.s) {
+      const t = (Date.now() % 900) / 900;
+      ctx.strokeStyle = 'rgba(126,240,193,' + (1 - t) + ')';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 20 + t * 26, 0, 7); ctx.stroke();
+    }
+    ctx.fillStyle = p.f ? '#5a7fd6' : (isMe ? '#7ef0c1' : '#ff9d6b');
+    ctx.beginPath(); ctx.arc(p.x, p.y, 14, 0, 7); ctx.fill();
+    if (isMe) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, 17, 0, 7); ctx.stroke(); }
+    if (p.f) { ctx.font = '16px serif'; ctx.fillText('🧊', p.x, p.y - 24); }
+    ctx.font = 'bold 13px Tahoma';
+    ctx.fillStyle = isMe ? '#7ef0c1' : '#e8eeff';
+    ctx.fillText(escTxt(info.name) + (info.bot ? ' 🤖' : ''), p.x, p.y + 30);
+  }
+
+  ctx.restore();
+}
+
+function resizeIfNeeded() {
+  if (cv.width !== innerWidth * DPR || cv.height !== innerHeight * DPR) resize();
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function inVaultMe(m) { const v = map.vault; return m.x > v.x && m.x < v.x + v.w && m.y > v.y && m.y < v.y + v.h; }
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function escTxt(s) { return String(s || '').slice(0, 14); }
+
+function updateHud() {
+  const left = state.left || 0;
+  const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, '0');
+  $('timer').textContent = mm + ':' + ss;
+  $('timer').classList.toggle('warn', left <= 30);
+  $('scoreline').textContent = 'متبقّي ' + (map ? map.spots.length - state.spots.length : 0) + ' أماكن';
+
+  // contextual buttons
+  if (phase !== 'game') return;
+  const m = me();
+  if (!m) return;
+  meFrozen = !!m.f;
+  let nearSpot = false;
+  if (map) {
+    for (const s of map.spots) {
+      if (state.spots.includes(s.id)) continue;
+      if (Math.hypot(m.x - s.x, m.y - s.y) < 80) { nearSpot = true; break; }
+    }
+  }
+  $('btnSearch').classList.toggle('hidden', !(nearSpot && !meFrozen));
+  let nearPlayer = false;
+  for (const p of state.players) {
+    if (p.id === myId) continue;
+    if (Math.hypot(m.x - p.x, m.y - p.y) < 115) { nearPlayer = true; break; }
+  }
+  $('btnExpose').classList.toggle('hidden', !(nearPlayer && !meFrozen));
+}
+
+let toastTimer = null;
+function toast(txt) {
+  $('toastTxt').textContent = txt;
+  $('toast').classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $('toast').classList.add('hidden'), 3200);
+}
+function buzz(pat) { try { navigator.vibrate && navigator.vibrate(pat); } catch (e) { } }
+
+// ---------- input: joystick ----------
+const stick = $('stick'), knob = $('knob');
+let stickId = null, sdx = 0, sdy = 0, lastSent = '';
+function setKnob(dx, dy) {
+  knob.style.left = (38 + dx * 34) + 'px';
+  knob.style.top = (38 + dy * 34) + 'px';
+}
+function sendInput() {
+  const key = sdx.toFixed(2) + ',' + sdy.toFixed(2);
+  if (key === lastSent) return;
+  lastSent = key;
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'input', dx: sdx, dy: sdy }));
+}
+stick.addEventListener('touchstart', e => {
+  e.preventDefault();
+  stickId = e.changedTouches[0].identifier;
+}, { passive: false });
+addEventListener('touchmove', e => {
+  if (stickId === null) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier !== stickId) continue;
+    const r = stick.getBoundingClientRect();
+    let dx = (t.clientX - (r.left + r.width / 2)) / (r.width / 2);
+    let dy = (t.clientY - (r.top + r.height / 2)) / (r.height / 2);
+    const len = Math.hypot(dx, dy);
+    if (len > 1) { dx /= len; dy /= len; }
+    sdx = dx; sdy = dy;
+    setKnob(dx, dy);
+    sendInput();
+  }
+}, { passive: false });
+addEventListener('touchend', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier !== stickId) continue;
+    stickId = null; sdx = 0; sdy = 0;
+    setKnob(0, 0);
+    sendInput();
+  }
+});
+
+// keyboard fallback (desktop testing)
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key.toLowerCase() === 'e') $('btnSearch').click();
+  if (e.key.toLowerCase() === 'q') $('btnExpose').click();
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+setInterval(() => {
+  if (stickId !== null) return;
+  const dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
+  const dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
+  sdx = dx; sdy = dy; sendInput();
+}, 60);
+
+$('btnSearch').addEventListener('click', () => {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'search' }));
+});
+$('btnExpose').addEventListener('click', () => {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'expose' }));
+});
+
+// ---------- lobby wiring ----------
+$('btnJoin').addEventListener('click', () => {
+  const name = $('nameIn').value.trim();
+  if (!name) { $('joinErr').textContent = 'اكتب اسمك الأول'; return; }
+  $('joinErr').textContent = '';
+  connect(name, $('codeIn').value.trim(), ok => { });
+});
+$('btnStart').addEventListener('click', () => {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'start' }));
+});
+$('btnAddBot').addEventListener('click', () => ws && ws.send(JSON.stringify({ t: 'addbot' })));
+$('btnRmBot').addEventListener('click', () => ws && ws.send(JSON.stringify({ t: 'rmbot' })));
+$('btnAgain').addEventListener('click', () => $('endOverlay').classList.add('hidden'));
+$('btnShare').addEventListener('click', async () => {
+  const link = location.origin + '/?room=' + roomCode;
+  const text = 'تعالوا نلعب "Lowkey" 🫣 كود الأوضة: ' + roomCode + '\n' + link;
+  if (navigator.share) {
+    try { await navigator.share({ text }); return; } catch (e) { }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('اللينك اتنسخ! ابعته لصحابك 📋');
+  } catch (e) {
+    toast('الكود: ' + roomCode);
+  }
+});
+
+// prefill from ?room=
+if (qs.get('room')) $('codeIn').value = qs.get('room').toUpperCase().slice(0, 4);
+
+draw();
+</script>
+</body>
+</html>
