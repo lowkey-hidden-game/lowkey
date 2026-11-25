@@ -3,16 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#10141f">
+<meta name="theme-color" content="#0d1120">
 <link rel="icon" href="data:,">
 <title>Lowkey</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; overflow: hidden; background: #10141f; color: #eef2ff;
+  html, body { height: 100%; overflow: hidden; background: #0d1120; color: #eef2ff;
     font-family: Tahoma, Arial, sans-serif; touch-action: none; overscroll-behavior: none; }
   .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; gap: 14px; padding: 24px; text-align: center; }
-  h1 { font-size: 34px; color: #ffd34d; }
+    justify-content: center; gap: 14px; padding: 24px; text-align: center;
+    background: radial-gradient(1200px 800px at 70% 20%, #1a2340 0%, #0d1120 60%); }
+  h1 { font-size: 44px; color: #ffd34d; text-shadow: 0 0 24px rgba(255,211,77,.35); letter-spacing: 1px; }
   h2 { font-size: 22px; color: #ffd34d; }
   .sub { color: #9fb0d0; font-size: 15px; line-height: 1.7; max-width: 320px; }
   input { width: 240px; padding: 12px; font-size: 18px; text-align: center; border-radius: 10px;
@@ -22,40 +23,50 @@
     background: #ffd34d; color: #1a1a1a; font-size: 18px; font-weight: bold; padding: 13px 34px; }
   button:disabled { background: #3a4767; color: #7c8bb0; }
   button.ghost { background: #232c44; color: #cfe0ff; font-size: 15px; padding: 10px 20px; }
-  #roomCode { font-size: 40px; letter-spacing: 10px; color: #7ef0c1; font-weight: bold; direction: ltr; }
+  #roomCode { font-size: 40px; letter-spacing: 10px; color: #7ef0c1; font-weight: bold; direction: ltr;
+    text-shadow: 0 0 16px rgba(126,240,193,.4); }
   #plist { display: flex; flex-direction: column; gap: 6px; min-width: 240px; }
   .prow { background: #1b2438; border-radius: 8px; padding: 8px 14px; font-size: 16px; display: flex; justify-content: space-between; }
   .hidden { display: none !important; }
   canvas { display: block; position: fixed; inset: 0; }
   #hud { position: fixed; top: 0; left: 0; right: 0; display: flex; justify-content: space-between;
     padding: 10px 14px; pointer-events: none; font-size: 16px; z-index: 5; }
-  .pill { background: rgba(16,20,31,.75); border-radius: 20px; padding: 6px 14px; }
+  .pill { background: rgba(13,17,32,.8); border: 1px solid rgba(255,255,255,.08); border-radius: 20px; padding: 6px 14px; }
   #timer.warn { color: #ff6b6b; }
-  #secret { position: fixed; top: 52px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
+  #effects { position: fixed; top: 50px; left: 14px; display: flex; gap: 6px; pointer-events: none; z-index: 5; }
+  .fx { background: rgba(13,17,32,.8); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 4px 10px; font-size: 14px; }
+  #secret { position: fixed; top: 84px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
   #secret span { background: linear-gradient(90deg,#ffd34d,#ff9d3d); color: #1a1a1a; font-weight: bold;
     border-radius: 24px; padding: 9px 22px; font-size: 16px; box-shadow: 0 0 18px rgba(255,211,77,.5); }
-  #toast { position: fixed; bottom: 170px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
-  #toast span { background: rgba(20,26,42,.9); border-radius: 16px; padding: 8px 18px; font-size: 15px; color: #cfe0ff; }
-  .actbtn { position: fixed; z-index: 6; width: 84px; height: 84px; border-radius: 50%; font-size: 17px;
-    padding: 0; box-shadow: 0 4px 14px rgba(0,0,0,.45); }
-  #btnSearch { left: 20px; bottom: 110px; background: #7ef0c1; }
-  #btnExpose { left: 116px; bottom: 40px; background: #ff6b6b; color: #fff; }
+  #toast { position: fixed; bottom: 190px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
+  #toast span { background: rgba(20,26,42,.92); border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 8px 18px; font-size: 15px; color: #cfe0ff; }
+  .actbtn { position: fixed; z-index: 6; width: 76px; height: 76px; border-radius: 50%; font-size: 14px;
+    padding: 0; box-shadow: 0 4px 14px rgba(0,0,0,.45); line-height: 1.2; }
+  .actbtn small { font-size: 12px; }
+  #btnSearch { left: 18px; bottom: 128px; background: #7ef0c1; }
+  #btnExpose { left: 104px; bottom: 46px; background: #ff6b6b; color: #fff; }
+  #btnBuild { left: 18px; bottom: 216px; background: #c98d4b; color: #fff; }
+  #btnGhost { left: 104px; bottom: 134px; background: #b48cff; color: #fff; }
   #stick { position: fixed; z-index: 4; right: 26px; bottom: 60px; width: 130px; height: 130px;
     border-radius: 50%; background: rgba(255,255,255,.06); border: 2px solid rgba(255,255,255,.15); }
   #knob { position: absolute; width: 54px; height: 54px; border-radius: 50%;
     background: rgba(255,255,255,.25); left: 38px; top: 38px; }
-  #endOverlay { position: fixed; inset: 0; background: rgba(10,13,22,.88); z-index: 10;
+  #endOverlay { position: fixed; inset: 0; background: rgba(8,11,20,.9); z-index: 10;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; }
   #endTitle { font-size: 28px; color: #ffd34d; }
   #endDetail { font-size: 17px; color: #cfe0ff; line-height: 1.8; }
-  #lobbyEvents, #gameEvents { font-size: 14px; color: #9fb0d0; min-height: 20px; }
+  #lobbyEvents { font-size: 14px; color: #9fb0d0; min-height: 20px; }
+  #avRow { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 4px 0 10px; }
+  #avRow button { width: 44px; height: 44px; font-size: 22px; border-radius: 12px; border: 2px solid transparent; background: rgba(255,255,255,.06); cursor: pointer; padding: 0; }
+  #avRow button.sel { border-color: #7ee0ff; background: rgba(126,224,255,.18); }
+  #avRow button.taken { opacity: .3; }
 </style>
 </head>
 <body>
 
 <div id="join" class="screen">
-  <h1>🫣 Lowkey</h1>
-  <p class="sub">كنز واحد مخبي في المكان.. دوّر عليه، ولما تلاقيه <b>متخليش حد يعرف إنه معاك</b>! وصّله للخزنة من غير ما حد يمسكك واكسب. لو شكيت في حد.. اكشفه!</p>
+  <h1>Lowkey 🫣</h1>
+  <p class="sub">كنز واحد مخبي في المكان.. دوّر عليه، ولما تلاقيه <b>متخليش حد يعرف إنه معاك</b>! وصّله للخزنة من غير ما حد يمسكك واكسب. ابني حيطان، خد الباورات، ولو شكيت في حد.. اكشفه!</p>
   <input id="nameIn" maxlength="14" placeholder="اسمك" autocomplete="off">
   <input id="codeIn" maxlength="4" placeholder="كود الأوضة (لو معاك)" autocomplete="off" style="text-transform:uppercase">
   <button id="btnJoin">ادخل / اعمل أوضة</button>
@@ -67,6 +78,8 @@
   <div id="roomCode"></div>
   <button class="ghost" id="btnShare">📤 ابعت اللينك لصحابك</button>
   <div id="plist"></div>
+  <p class="sub" style="margin:10px 0 2px">اختار شخصيتك:</p>
+  <div id="avRow"></div>
   <div id="lobbyEvents"></div>
   <div style="display:flex;gap:10px">
     <button class="ghost" id="btnAddBot">🤖 زوّد بوت</button>
@@ -82,13 +95,15 @@
   <div class="pill" id="timer">3:00</div>
   <div class="pill" id="scoreline"></div>
 </div>
+<div id="effects" class="hidden"></div>
 <div id="secret" class="hidden"><span>🤫 الكنز معاك! وصّله للخزنة من غير ما حد يشك</span></div>
 <div id="toast" class="hidden"><span id="toastTxt"></span></div>
-<div id="gameEvents" class="hidden" style="position:fixed;top:52px;left:0;right:0;text-align:center;pointer-events:none;z-index:5"></div>
 
 <div id="stick" class="hidden"><div id="knob"></div></div>
 <button id="btnSearch" class="actbtn hidden">🔍<br>دوّر</button>
 <button id="btnExpose" class="actbtn hidden">🫵<br>اكشف</button>
+<button id="btnBuild" class="actbtn hidden">🧱<br><small id="wallCount">٣</small></button>
+<button id="btnGhost" class="actbtn hidden">👻<br>تخفّي</button>
 
 <div id="endOverlay" class="hidden">
   <div id="endTitle"></div>
@@ -102,10 +117,13 @@ const $ = id => document.getElementById(id);
 const qs = new URLSearchParams(location.search);
 
 let ws, myId = null, roomCode = null, map = null, roster = {};
-let state = { players: [], spots: [], left: 0 };
-let carrier = false, meFrozen = false;
+const AVATARS = ['🦊', '🐼', '🐸', '🦁', '🐰', '🐯', '🐵', '🦉', '🐙', '🐺', '🦄', '🐝'];
+let state = { players: [], spots: [], walls: [], powers: [], left: 0, me: {} };
+let carrier = false;
 let phase = 'join';
 let camX = 0, camY = 0;
+let revealId = null, revealUntil = 0;
+let ghostUntil = 0;
 
 function connect(name, code, cb) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -144,6 +162,8 @@ function handle(m, joinCb) {
       m.players.forEach(p => roster[p.id] = p);
       map = m.map;
       carrier = false;
+      revealId = null;
+      ghostUntil = 0;
       $('secret').classList.add('hidden');
       $('endOverlay').classList.add('hidden');
       showGame();
@@ -165,9 +185,28 @@ function handle(m, joinCb) {
         buzz([80, 60, 80]);
       }
       break;
+    case 'power':
+      if (m.type === 'speed') toast('⚡ سرعة خارقة ٦ ثواني!');
+      if (m.type === 'shield') toast('🛡️ درع! بيحميك من كشف واحد');
+      if (m.type === 'reveal') toast('👁️ شفت الحرامي! وراك وراه');
+      if (m.type === 'ghost') toast('👻 اختفيت عن الأنظار لحظات!');
+      if (m.type === 'goggles') toast('🥽 نظارة الرؤية: شايف المختفيين ٦ ثواني!');
+      buzz(60);
+      break;
+    case 'reveal':
+      revealId = m.id;
+      revealUntil = Date.now() + m.ms;
+      break;
+    case 'ghost':
+      ghostUntil = Date.now() + m.ms;
+      toast('👻 اختفيت! محدش شايفك');
+      buzz([40, 40, 40]);
+      break;
     case 'event':
       if (m.kind === 'wrong_expose') toast('❌ ' + m.by + ' اتهم ' + m.on + ' غلط واتجمد ١٢ ثانية!');
       if (m.kind === 'exposed') toast('🚨 ' + m.by + ' كشف ' + m.on + ' والكنز كان معاه!');
+      if (m.kind === 'shielded') toast('🛡️ درع ' + m.on + ' صدّ كشف ' + m.by + '!');
+      if (m.kind === 'treasure_moved') toast('👀 حسيت بحركة.. الكنز غيّر مكانه!');
       break;
     case 'end':
       showEnd(m);
@@ -181,11 +220,11 @@ function show(id) {
   const inGame = id === null;
   $('cv').classList.toggle('hidden', !inGame);
   $('hud').classList.toggle('hidden', !inGame);
+  $('effects').classList.toggle('hidden', !inGame);
   $('stick').classList.toggle('hidden', !inGame);
-  $('gameEvents').classList.toggle('hidden', !inGame);
-  if (!inGame) { $('btnSearch').classList.add('hidden'); $('btnExpose').classList.add('hidden'); }
+  if (!inGame) ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost'].forEach(b => $(b).classList.add('hidden'));
 }
-function showLobby() { show('lobby'); $('btnAgain') && $('endOverlay').classList.add('hidden'); }
+function showLobby() { show('lobby'); $('endOverlay').classList.add('hidden'); }
 function showGame() { show(null); resize(); }
 
 function renderLobby(m) {
@@ -193,8 +232,14 @@ function renderLobby(m) {
   roster = {};
   m.players.forEach(p => roster[p.id] = p);
   $('plist').innerHTML = m.players.map(p =>
-    '<div class="prow"><span>' + (p.host ? '👑 ' : '') + esc(p.name) + '</span><span>🏆 ' + p.wins + '</span></div>'
+    '<div class="prow"><span>' + (p.host ? '👑 ' : '') + (AVATARS[p.avatar] || '') + ' ' + esc(p.name) + '</span><span>🏆 ' + p.wins + '</span></div>'
   ).join('');
+  const mineAv = roster[myId] ? roster[myId].avatar : -1;
+  const takenAv = new Set(m.players.filter(p => p.id !== myId).map(p => p.avatar));
+  $('avRow').innerHTML = AVATARS.map((a, i) =>
+    '<button data-a="' + i + '" class="' + (i === mineAv ? 'sel' : takenAv.has(i) ? 'taken' : '') + '">' + a + '</button>'
+  ).join('');
+  $('avRow').querySelectorAll('button').forEach(b => b.onclick = () => ws && ws.send(JSON.stringify({ t: 'avatar', a: +b.dataset.a })));
   const amHost = m.players.find(p => p.id === myId && p.host);
   $('btnStart').style.display = amHost ? '' : 'none';
   $('btnAddBot').style.display = amHost ? '' : 'none';
@@ -209,8 +254,7 @@ function showEnd(m) {
   phase = 'end';
   carrier = false;
   $('secret').classList.add('hidden');
-  $('btnSearch').classList.add('hidden');
-  $('btnExpose').classList.add('hidden');
+  ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost'].forEach(b => $(b).classList.add('hidden'));
   const title = $('endTitle'), detail = $('endDetail');
   if (m.reason === 'deposit') {
     title.textContent = '🏆 ' + m.winnerName + ' كسب!';
@@ -246,13 +290,12 @@ function draw() {
   if (phase !== 'game' && phase !== 'end') return;
   if (!map) return;
   resizeIfNeeded();
+  const now = Date.now();
   ctx.save();
   ctx.scale(DPR, DPR);
-  ctx.fillStyle = '#10141f';
-  ctx.fillRect(0, 0, innerWidth, innerHeight);
 
   const m = me();
-  if (m) {
+  if (m && m.x > -100) {
     camX += ((m.x - innerWidth / 2) - camX) * 0.15;
     camY += ((m.y - innerHeight / 2) - camY) * 0.15;
   }
@@ -260,71 +303,161 @@ function draw() {
   camY = Math.max(0, Math.min(map.h - innerHeight, camY));
   if (map.w < innerWidth) camX = (map.w - innerWidth) / 2;
   if (map.h < innerHeight) camY = (map.h - innerHeight) / 2;
+
+  // backdrop
+  const bg = ctx.createLinearGradient(0, 0, 0, innerHeight);
+  bg.addColorStop(0, '#131a2e');
+  bg.addColorStop(1, '#0d1120');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
+
   ctx.translate(-camX, -camY);
 
   // floor
-  ctx.fillStyle = '#151b2c';
+  ctx.fillStyle = '#161d31';
   ctx.fillRect(0, 0, map.w, map.h);
-  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.035)';
   ctx.lineWidth = 1;
   for (let gx = 0; gx < map.w; gx += 80) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, map.h); ctx.stroke(); }
   for (let gy = 0; gy < map.h; gy += 80) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(map.w, gy); ctx.stroke(); }
 
-  // vault
+  // vault (pulsing)
   const v = map.vault;
-  ctx.fillStyle = 'rgba(255,211,77,0.14)';
+  const pulse = 0.12 + 0.06 * Math.sin(now / 400);
+  ctx.fillStyle = 'rgba(255,211,77,' + pulse + ')';
   ctx.fillRect(v.x, v.y, v.w, v.h);
+  ctx.save();
+  ctx.shadowColor = '#ffd34d'; ctx.shadowBlur = 18;
   ctx.strokeStyle = '#ffd34d'; ctx.lineWidth = 3;
   ctx.setLineDash([10, 8]);
   ctx.strokeRect(v.x, v.y, v.w, v.h);
   ctx.setLineDash([]);
-  ctx.font = '34px serif'; ctx.textAlign = 'center';
+  ctx.restore();
+  ctx.font = '36px serif'; ctx.textAlign = 'center';
   ctx.fillText('🏦', v.x + v.w / 2, v.y + v.h / 2 + 4);
   ctx.font = 'bold 16px Tahoma'; ctx.fillStyle = '#ffd34d';
-  ctx.fillText('الخزنة', v.x + v.w / 2, v.y + v.h / 2 + 32);
+  ctx.fillText('الخزنة', v.x + v.w / 2, v.y + v.h / 2 + 34);
 
-  // deposit progress ring for carrier
-  if (carrier && m && inVaultMe(m)) {
-    // drawn below with player ring using depositProgress estimate
-  }
-
-  // spots
+  // spots (crates)
   for (const s of map.spots) {
     const searched = state.spots.includes(s.id);
-    ctx.globalAlpha = searched ? 0.25 : 1;
-    ctx.fillStyle = '#8a6134';
-    roundRect(s.x - 20, s.y - 20, 40, 40, 6); ctx.fill();
-    ctx.strokeStyle = '#5d3f1e'; ctx.lineWidth = 3;
+    ctx.globalAlpha = searched ? 0.22 : 1;
+    ctx.save();
+    if (!searched) { ctx.shadowColor = 'rgba(201,141,75,.6)'; ctx.shadowBlur = 10; }
+    const g = ctx.createLinearGradient(s.x - 20, s.y - 20, s.x + 20, s.y + 20);
+    g.addColorStop(0, '#a5763f'); g.addColorStop(1, '#7a5227');
+    ctx.fillStyle = g;
+    roundRect(s.x - 20, s.y - 20, 40, 40, 7); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = '#54371a'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(s.x - 16, s.y - 16); ctx.lineTo(s.x + 16, s.y + 16);
     ctx.moveTo(s.x + 16, s.y - 16); ctx.lineTo(s.x - 16, s.y + 16); ctx.stroke();
     ctx.globalAlpha = 1;
     if (!searched) {
-      ctx.font = '18px serif'; ctx.fillText('❓', s.x, s.y - 28);
+      ctx.font = '18px serif';
+      ctx.fillText('❓', s.x, s.y - 30 + 3 * Math.sin(now / 350 + s.id));
     }
   }
 
-  // walls
-  ctx.fillStyle = '#2c3a5e';
-  for (const w of map.walls) { roundRect(w.x, w.y, w.w, w.h, 4); ctx.fill(); }
+  // search progress bars over boxes being searched
+  for (const p of state.players) {
+    if (!p.sp || p.spid < 0) continue;
+    const s = map.spots[p.spid];
+    const bw = 52, bh = 8;
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    roundRect(s.x - bw / 2, s.y - 46, bw, bh, 4); ctx.fill();
+    const pg = ctx.createLinearGradient(s.x - bw / 2, 0, s.x + bw / 2, 0);
+    pg.addColorStop(0, '#7ef0c1'); pg.addColorStop(1, '#38c88f');
+    ctx.fillStyle = pg;
+    if (p.sp > 0.01) { roundRect(s.x - bw / 2 + 1.5, s.y - 46 + 1.5, (bw - 3) * p.sp, bh - 3, 3); ctx.fill(); }
+  }
+
+  // walls (static, 3D-ish)
+  for (const w of map.walls) {
+    ctx.fillStyle = '#232f4f';
+    roundRect(w.x, w.y, w.w, w.h, 4); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.09)';
+    roundRect(w.x, w.y, w.w, Math.min(6, w.h), 4); ctx.fill();
+  }
+
+  // built walls (with fade-out)
+  for (const w of (state.walls || [])) {
+    const a = w.ttl <= 3 ? Math.max(0.25, w.ttl / 3) : 1;
+    ctx.globalAlpha = a;
+    ctx.save();
+    ctx.shadowColor = 'rgba(201,141,75,.7)'; ctx.shadowBlur = 8;
+    const g = ctx.createLinearGradient(w.x, w.y, w.x, w.y + w.h);
+    g.addColorStop(0, '#b57e42'); g.addColorStop(1, '#8a5c28');
+    ctx.fillStyle = g;
+    roundRect(w.x, w.y, w.w, w.h, 6); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(84,55,26,.9)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(w.x + 6, w.y + w.h / 2); ctx.lineTo(w.x + w.w - 6, w.y + w.h / 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // power-ups (floating)
+  for (const pu of (state.powers || [])) {
+    const bob = 4 * Math.sin(now / 300 + pu.id);
+    const icon = pu.type === 'speed' ? '⚡' : pu.type === 'shield' ? '🛡️' : pu.type === 'reveal' ? '👁️' : pu.type === 'ghost' ? '👻' : '🥽';
+    ctx.save();
+    ctx.shadowColor = pu.type === 'speed' ? '#ffd34d' : pu.type === 'shield' ? '#6bb8ff' : pu.type === 'reveal' ? '#ff8ad4' : pu.type === 'ghost' ? '#c9a0ff' : '#7ee0ff';
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = 'rgba(255,255,255,.1)';
+    ctx.beginPath(); ctx.arc(pu.x, pu.y + bob, 17, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.font = '22px serif';
+    ctx.fillText(icon, pu.x, pu.y + bob + 7);
+  }
 
   // players
   for (const p of state.players) {
+    if (p.x < -100) continue; // ghosted
     const info = roster[p.id] || { name: '?', bot: false };
     const isMe = p.id === myId;
-    // search pulse
+    const revealed = revealId === p.id && now < revealUntil;
+
     if (p.s) {
-      const t = (Date.now() % 900) / 900;
-      ctx.strokeStyle = 'rgba(126,240,193,' + (1 - t) + ')';
+      const t = (now % 900) / 900;
+      ctx.strokeStyle = 'rgba(126,240,193,' + (0.8 - t * 0.7) + ')';
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(p.x, p.y, 20 + t * 26, 0, 7); ctx.stroke();
     }
-    ctx.fillStyle = p.f ? '#5a7fd6' : (isMe ? '#7ef0c1' : '#ff9d6b');
+    if (revealed) {
+      ctx.save();
+      ctx.shadowColor = '#ff4d4d'; ctx.shadowBlur = 24;
+      ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 22 + 2 * Math.sin(now / 150), 0, 7); ctx.stroke();
+      ctx.restore();
+      ctx.font = '16px serif'; ctx.fillText('👁️', p.x, p.y - 30);
+    }
+
+    ctx.save();
+    if (isMe && state.me && state.me.speed) { ctx.shadowColor = '#ffd34d'; ctx.shadowBlur = 16; }
+    if ((isMe && state.me && state.me.ghost) || p.g) ctx.globalAlpha = 0.45;
+    const body = ctx.createRadialGradient(p.x - 4, p.y - 5, 2, p.x, p.y, 15);
+    if (p.f) { body.addColorStop(0, '#8fb0ee'); body.addColorStop(1, '#4a68b8'); }
+    else if (isMe) { body.addColorStop(0, '#a4f5cf'); body.addColorStop(1, '#3ecf92'); }
+    else { body.addColorStop(0, '#ffb98a'); body.addColorStop(1, '#e8773d'); }
+    ctx.fillStyle = body;
     ctx.beginPath(); ctx.arc(p.x, p.y, 14, 0, 7); ctx.fill();
+    if (p.a !== undefined && AVATARS[p.a]) { ctx.font = '15px serif'; ctx.fillText(AVATARS[p.a], p.x, p.y + 5); }
+    ctx.restore();
+
     if (isMe) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, 17, 0, 7); ctx.stroke(); }
     if (p.f) { ctx.font = '16px serif'; ctx.fillText('🧊', p.x, p.y - 24); }
     ctx.font = 'bold 13px Tahoma';
     ctx.fillStyle = isMe ? '#7ef0c1' : '#e8eeff';
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 4;
     ctx.fillText(escTxt(info.name) + (info.bot ? ' 🤖' : ''), p.x, p.y + 30);
+    ctx.restore();
+  }
+
+  // deposit progress ring for carrier
+  if (m && state.me && state.me.deposit > 0) {
+    ctx.strokeStyle = '#ffd34d'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(m.x, m.y, 24, -Math.PI / 2, -Math.PI / 2 + state.me.deposit * Math.PI * 2); ctx.stroke();
   }
 
   ctx.restore();
@@ -340,7 +473,6 @@ function roundRect(x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
-function inVaultMe(m) { const v = map.vault; return m.x > v.x && m.x < v.x + v.w && m.y > v.y && m.y < v.y + v.h; }
 function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 function escTxt(s) { return String(s || '').slice(0, 14); }
 
@@ -351,11 +483,20 @@ function updateHud() {
   $('timer').classList.toggle('warn', left <= 30);
   $('scoreline').textContent = 'متبقّي ' + (map ? map.spots.length - state.spots.length : 0) + ' أماكن';
 
-  // contextual buttons
+  // active effects chips
+  const meInfo = state.me || {};
+  const chips = [];
+  if (meInfo.speed) chips.push('⚡ سرعة');
+  if (meInfo.shield) chips.push('🛡️ درع');
+  if (meInfo.ghost) chips.push('👻 مختفي');
+  if (meInfo.goggles) chips.push('🥽 نظارة');
+  if (Date.now() < revealUntil) chips.push('👁️ كاشف الحرامي');
+  $('effects').innerHTML = chips.map(c => '<span class="fx">' + c + '</span>').join('');
+
   if (phase !== 'game') return;
   const m = me();
   if (!m) return;
-  meFrozen = !!m.f;
+  const meFrozen = !!m.f;
   let nearSpot = false;
   if (map) {
     for (const s of map.spots) {
@@ -366,10 +507,13 @@ function updateHud() {
   $('btnSearch').classList.toggle('hidden', !(nearSpot && !meFrozen));
   let nearPlayer = false;
   for (const p of state.players) {
-    if (p.id === myId) continue;
+    if (p.id === myId || p.x < -100) continue;
     if (Math.hypot(m.x - p.x, m.y - p.y) < 115) { nearPlayer = true; break; }
   }
   $('btnExpose').classList.toggle('hidden', !(nearPlayer && !meFrozen));
+  $('wallCount').textContent = (meInfo.walls || 0).toLocaleString('ar-EG');
+  $('btnBuild').classList.toggle('hidden', !((meInfo.walls || 0) > 0 && !meFrozen));
+  $('btnGhost').classList.toggle('hidden', !(carrier && meInfo.ghostLeft && !meFrozen));
 }
 
 let toastTimer = null;
@@ -427,6 +571,8 @@ addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
   if (e.key.toLowerCase() === 'e') $('btnSearch').click();
   if (e.key.toLowerCase() === 'q') $('btnExpose').click();
+  if (e.key.toLowerCase() === 'b') $('btnBuild').click();
+  if (e.key.toLowerCase() === 'g') $('btnGhost').click();
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 setInterval(() => {
@@ -436,12 +582,10 @@ setInterval(() => {
   sdx = dx; sdy = dy; sendInput();
 }, 60);
 
-$('btnSearch').addEventListener('click', () => {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'search' }));
-});
-$('btnExpose').addEventListener('click', () => {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'expose' }));
-});
+$('btnSearch').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'search' })));
+$('btnExpose').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'expose' })));
+$('btnBuild').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'build' })));
+$('btnGhost').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'ghost' })));
 
 // ---------- lobby wiring ----------
 $('btnJoin').addEventListener('click', () => {
@@ -450,9 +594,7 @@ $('btnJoin').addEventListener('click', () => {
   $('joinErr').textContent = '';
   connect(name, $('codeIn').value.trim(), ok => { });
 });
-$('btnStart').addEventListener('click', () => {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'start' }));
-});
+$('btnStart').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'start' })));
 $('btnAddBot').addEventListener('click', () => ws && ws.send(JSON.stringify({ t: 'addbot' })));
 $('btnRmBot').addEventListener('click', () => ws && ws.send(JSON.stringify({ t: 'rmbot' })));
 $('btnAgain').addEventListener('click', () => $('endOverlay').classList.add('hidden'));
@@ -470,7 +612,6 @@ $('btnShare').addEventListener('click', async () => {
   }
 });
 
-// prefill from ?room=
 if (qs.get('room')) $('codeIn').value = qs.get('room').toUpperCase().slice(0, 4);
 
 draw();

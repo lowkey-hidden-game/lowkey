@@ -1,4 +1,5 @@
 // Lowkey - zero-dependency game server (Node 18+)
+// v2: building, moving treasure, power-ups, carrier ghost, human-like bots.
 // HTTP static + WebSocket (hand-rolled, RFC6455 text frames) on one port.
 const http = require('http');
 const fs = require('fs');
@@ -43,17 +44,33 @@ const MAP = {
 const TICK_MS = 50;
 const PLAYER_SPEED = 170;
 const CARRIER_SPEED = 148;
+const SPEED_BOOST = 1.45;
+const SPEED_BOOST_SECONDS = 6;
 const PLAYER_R = 14;
 const SEARCH_RADIUS = 80;
 const SEARCH_TIME = 2.5;
 const EXPOSE_RADIUS = 115;
 const WRONG_FREEZE = 12;
 const EXPOSE_COOLDOWN = 30;
+const SHIELD_COOLDOWN = 8;
 const DEPOSIT_TIME = 4;
 const ROUND_SECONDS = Number(process.env.ROUND_SECONDS) || 180;
+const MOVE_SECONDS = Number(process.env.MOVE_SECONDS) || 40;      // treasure relocates if unfound
+const POWERUP_SECONDS = Number(process.env.POWERUP_SECONDS) || 22; // spawn cadence
+const MAX_POWERUPS = 3;
+const WALL_SECONDS = Number(process.env.WALL_SECONDS) || 15;
+const WALL_COOLDOWN = 4;
+const WALLS_PER_ROUND = 3;
+const WALL_SIZE = 64;
+const GHOST_SECONDS = 2.5;
+const GOGGLES_SECONDS = 6;
+const REVEAL_SECONDS = 4;
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 10;
 const ENDED_BACK_TO_LOBBY_MS = 9000;
+const POWER_TYPES = ['speed', 'shield', 'reveal', 'ghost', 'goggles'];
+const AVATARS = ['🦊', '🐼', '🐸', '🦁', '🐰', '🐯', '🐵', '🦉', '🐙', '🐺', '🦄', '🐝'];
+const FORCE_POWER = process.env.FORCE_POWER || null;
 
 // ---------------- Rooms ----------------
 const rooms = new Map();
@@ -69,30 +86,32 @@ function makeRoom(code) {
   return {
     code,
     players: new Map(),
-    state: 'lobby', // lobby | playing | ended
+    state: 'lobby',
     hostId: null,
     treasureSpot: -1,
     searched: new Set(),
     endsAt: 0,
+    moveAt: 0,
+    powerAt: 0,
+    powerSeq: 0,
+    powerups: [],
+    dynWalls: [],
+    wallSeq: 0,
     botSeq: 0,
     endTimer: null,
     interval: null,
   };
 }
 
-function pid() {
-  return crypto.randomBytes(4).toString('hex');
-}
+function pid() { return crypto.randomBytes(4).toString('hex'); }
 
 function publicPlayer(p) {
-  return { id: p.id, name: p.name, bot: !!p.bot, host: p.room.hostId === p.id, wins: p.wins };
+  return { id: p.id, name: p.name, bot: !!p.bot, host: p.room.hostId === p.id, wins: p.wins, avatar: p.avatar };
 }
 
 function sendTo(p, obj) {
   if (p.bot || !p.ws) return;
-  try {
-    wsSend(p.ws, JSON.stringify(obj));
-  } catch (e) { /* socket dying */ }
+  try { wsSend(p.ws, JSON.stringify(obj)); } catch (e) { }
 }
 
 function broadcast(room, obj) {
@@ -124,6 +143,10 @@ function startRound(room) {
   room.searched = new Set();
   room.treasureSpot = process.env.FORCE_SPOT !== undefined ? Number(process.env.FORCE_SPOT) : crypto.randomInt(MAP.spots.length);
   room.endsAt = Date.now() + ROUND_SECONDS * 1000;
+  room.moveAt = Date.now() + MOVE_SECONDS * 1000;
+  room.powerAt = Date.now() + 3000; // first power-up early
+  room.powerups = [];
+  room.dynWalls = [];
   let i = 0;
   for (const p of room.players.values()) {
     p.carrier = false;
@@ -133,9 +156,21 @@ function startRound(room) {
     p.frozenUntil = 0;
     p.exposeCdUntil = 0;
     p.dx = 0; p.dy = 0;
+    p.walls = WALLS_PER_ROUND;
+    p.wallCdUntil = 0;
+    p.shield = false;
+    p.speedUntil = 0;
+    p.revealUntil = 0;
+    p.ghostUsed = false;
+    p.ghostUntil = 0;
+    p.gogglesUntil = 0;
+    p.fx = 1; p.fy = 0;
     p.x = MAP.spawn.x + 30 + (i % 4) * ((MAP.spawn.w - 60) / 3) + crypto.randomInt(20);
     p.y = MAP.spawn.y + 30 + Math.floor(i / 4) * 80 + crypto.randomInt(20);
     p.botTarget = null;
+    p.pauseUntil = 0;
+    p.exposeAt = 0;
+    p.adjacentSince = 0;
     i++;
   }
   broadcast(room, {
@@ -158,7 +193,7 @@ function endRound(room, winnerId, reason) {
     winnerName: winner ? winner.name : null,
     carrierId: carrier ? carrier.id : null,
     carrierName: carrier ? carrier.name : null,
-    reason, // 'deposit' | 'exposed' | 'timeout' | 'carrier_left'
+    reason,
   });
   for (const p of room.players.values()) { p.dx = 0; p.dy = 0; p.channel = null; p.searching = false; }
   room.endTimer = setTimeout(() => {
@@ -174,25 +209,35 @@ function rectsOverlapCircle(cx, cy, r, rect) {
   return dx * dx + dy * dy < r * r;
 }
 
-function collide(px, py, r) {
+function collide(room, px, py, r) {
   for (const w of MAP.walls) {
+    if (rectsOverlapCircle(px, py, r, w)) return true;
+  }
+  for (const w of room.dynWalls) {
     if (rectsOverlapCircle(px, py, r, w)) return true;
   }
   return false;
 }
 
-function movePlayer(p, dt) {
-  if (Date.now() < p.frozenUntil) return;
+function effectiveSpeed(p, now) {
+  let s = p.carrier ? CARRIER_SPEED : PLAYER_SPEED;
+  if (now < p.speedUntil) s *= SPEED_BOOST;
+  return s;
+}
+
+function movePlayer(room, p, dt) {
+  const now = Date.now();
+  if (now < p.frozenUntil) return;
   let len = Math.hypot(p.dx, p.dy);
   if (len < 0.01) return;
   if (len > 1) { p.dx /= len; p.dy /= len; }
-  // moving cancels an active search channel
+  p.fx = p.dx; p.fy = p.dy;
   if (p.channel) { p.channel = null; p.searchProg = 0; }
-  const speed = p.carrier ? CARRIER_SPEED : PLAYER_SPEED;
+  const speed = effectiveSpeed(p, now);
   const nx = p.x + p.dx * speed * dt;
-  if (!collide(nx, p.y, PLAYER_R)) p.x = nx;
+  if (!collide(room, nx, p.y, PLAYER_R)) p.x = nx;
   const ny = p.y + p.dy * speed * dt;
-  if (!collide(p.x, ny, PLAYER_R)) p.y = ny;
+  if (!collide(room, p.x, ny, PLAYER_R)) p.y = ny;
   p.x = Math.max(PLAYER_R + 20, Math.min(MAP.w - PLAYER_R - 20, p.x));
   p.y = Math.max(PLAYER_R + 20, Math.min(MAP.h - PLAYER_R - 20, p.y));
 }
@@ -204,6 +249,17 @@ function nearestSpot(p) {
     if (d < bd) { bd = d; best = s; }
   }
   return { spot: best, dist: bd };
+}
+
+function nearestOther(room, p) {
+  let best = null, bd = Infinity;
+  for (const q of room.players.values()) {
+    if (q.id === p.id) continue;
+    if (Date.now() < q.ghostUntil) continue; // can't see a ghosted carrier
+    const d = Math.hypot(p.x - q.x, p.y - q.y);
+    if (d < bd) { bd = d; best = q; }
+  }
+  return { other: best, dist: bd };
 }
 
 function inVault(p) {
@@ -222,13 +278,14 @@ function trySearch(room, p) {
 function tryExpose(room, p) {
   const now = Date.now();
   if (room.state !== 'playing' || now < p.frozenUntil || now < p.exposeCdUntil) return;
-  let target = null, bd = Infinity;
-  for (const q of room.players.values()) {
-    if (q.id === p.id) continue;
-    const d = Math.hypot(p.x - q.x, p.y - q.y);
-    if (d < bd) { bd = d; target = q; }
-  }
+  const { other: target, dist: bd } = nearestOther(room, p);
   if (!target || bd > EXPOSE_RADIUS) return;
+  if (target.shield) {
+    target.shield = false;
+    p.exposeCdUntil = now + SHIELD_COOLDOWN * 1000;
+    broadcast(room, { t: 'event', kind: 'shielded', by: p.name, on: target.name });
+    return;
+  }
   if (target.carrier) {
     broadcast(room, { t: 'event', kind: 'exposed', by: p.name, on: target.name });
     endRound(room, p.id, 'exposed');
@@ -240,13 +297,103 @@ function tryExpose(room, p) {
   }
 }
 
+function tryBuild(room, p) {
+  const now = Date.now();
+  if (room.state !== 'playing' || now < p.frozenUntil || p.walls <= 0 || now < p.wallCdUntil) return;
+  const cx = p.x + p.fx * (PLAYER_R + WALL_SIZE / 2 + 4);
+  const cy = p.y + p.fy * (PLAYER_R + WALL_SIZE / 2 + 4);
+  const w = { x: Math.round(cx - WALL_SIZE / 2), y: Math.round(cy - WALL_SIZE / 2), w: WALL_SIZE, h: WALL_SIZE, id: ++room.wallSeq, expiresAt: now + WALL_SECONDS * 1000 };
+  if (collide(room, cx, cy, WALL_SIZE / 2)) return; // no space
+  if (inVault({ x: cx, y: cy })) return; // keep the vault open
+  p.walls--;
+  p.wallCdUntil = now + WALL_COOLDOWN * 1000;
+  room.dynWalls.push(w);
+}
+
+function tryGhost(room, p) {
+  const now = Date.now();
+  if (room.state !== 'playing' || !p.carrier || p.ghostUsed || now < p.frozenUntil) return;
+  p.ghostUsed = true;
+  p.ghostUntil = now + GHOST_SECONDS * 1000;
+  sendTo(p, { t: 'ghost', ms: GHOST_SECONDS * 1000 });
+}
+
+function freeSpot(room) {
+  for (let i = 0; i < 30; i++) {
+    const x = 60 + crypto.randomInt(MAP.w - 120);
+    const y = 60 + crypto.randomInt(MAP.h - 120);
+    if (!collide(room, x, y, 26) && !inVault({ x, y })) return { x, y };
+  }
+  return null;
+}
+
+function spawnPowerup(room) {
+  if (room.powerups.length >= MAX_POWERUPS) return;
+  let pos;
+  if (FORCE_POWER && room.powerSeq === 0) {
+    pos = { x: MAP.spawn.x + MAP.spawn.w / 2, y: MAP.spawn.y + MAP.spawn.h / 2 };
+  } else {
+    pos = freeSpot(room);
+  }
+  if (!pos) return;
+  const type = FORCE_POWER || POWER_TYPES[crypto.randomInt(POWER_TYPES.length)];
+  room.powerups.push({ id: ++room.powerSeq, x: pos.x, y: pos.y, type });
+}
+
+function applyPowerup(room, p, pu) {
+  const now = Date.now();
+  if (pu.type === 'speed') p.speedUntil = now + SPEED_BOOST_SECONDS * 1000;
+  if (pu.type === 'shield') p.shield = true;
+  if (pu.type === 'ghost') p.ghostUntil = now + GHOST_SECONDS * 1000;
+  if (pu.type === 'goggles') p.gogglesUntil = now + GOGGLES_SECONDS * 1000;
+  if (pu.type === 'reveal') {
+    p.revealUntil = now + REVEAL_SECONDS * 1000;
+    const carrier = [...room.players.values()].find(q => q.carrier);
+    if (carrier) sendTo(p, { t: 'reveal', id: carrier.id, ms: REVEAL_SECONDS * 1000 });
+  }
+  sendTo(p, { t: 'power', type: pu.type });
+}
+
+function relocateTreasure(room) {
+  const unsearched = MAP.spots.filter(s => !room.searched.has(s.id));
+  if (unsearched.length < 2) return;
+  const current = room.treasureSpot;
+  let next = current;
+  while (next === current) next = unsearched[crypto.randomInt(unsearched.length)].id;
+  room.treasureSpot = next;
+  broadcast(room, { t: 'event', kind: 'treasure_moved' });
+}
+
 function tick(room, dt) {
   const now = Date.now();
   if (now >= room.endsAt) { endRound(room, null, 'timeout'); return; }
 
+  room.dynWalls = room.dynWalls.filter(w => w.expiresAt > now);
+
+  // treasure relocation while unfound
+  if (room.treasureSpot >= 0 && now >= room.moveAt) {
+    relocateTreasure(room);
+    room.moveAt = now + MOVE_SECONDS * 1000;
+  }
+
+  // power-up spawns
+  if (now >= room.powerAt) {
+    spawnPowerup(room);
+    room.powerAt = now + POWERUP_SECONDS * 1000;
+  }
+
   for (const p of room.players.values()) {
     if (p.bot) botThink(room, p, dt);
-    movePlayer(p, dt);
+    movePlayer(room, p, dt);
+
+    // power-up pickup
+    for (let i = room.powerups.length - 1; i >= 0; i--) {
+      const pu = room.powerups[i];
+      if (Math.hypot(p.x - pu.x, p.y - pu.y) < 26) {
+        room.powerups.splice(i, 1);
+        applyPowerup(room, p, pu);
+      }
+    }
 
     // search channel progress
     if (p.channel && p.channel.type === 'search') {
@@ -264,7 +411,6 @@ function tick(room, dt) {
             p.carrier = true;
             room.treasureSpot = -1;
             sendTo(p, { t: 'secret', carrier: true });
-            if (p.bot) p.botKnows = true;
           } else {
             sendTo(p, { t: 'empty', spotId: spot.id });
           }
@@ -285,42 +431,122 @@ function tick(room, dt) {
     } else {
       p.depositProg = 0;
     }
+
+    // scheduled bot expose (reaction delay)
+    if (p.bot && p.exposeAt && now >= p.exposeAt) {
+      p.exposeAt = 0;
+      tryExpose(room, p);
+    }
   }
 
-  broadcast(room, {
-    t: 'state',
-    left: Math.max(0, Math.ceil((room.endsAt - now) / 1000)),
-    players: [...room.players.values()].map(p => ({
-      id: p.id,
-      x: Math.round(p.x),
-      y: Math.round(p.y),
-      s: p.searching ? 1 : 0,
-      f: now < p.frozenUntil ? 1 : 0,
-    })),
-    spots: [...room.searched],
-  });
+  // personalized state per viewer (ghost hides the carrier from others)
+  for (const viewer of room.players.values()) {
+    if (viewer.bot || !viewer.ws) continue;
+    const payload = {
+      t: 'state',
+      left: Math.max(0, Math.ceil((room.endsAt - now) / 1000)),
+      players: [...room.players.values()].map(p => {
+        const hidden = now < p.ghostUntil && p.id !== viewer.id && now >= viewer.gogglesUntil;
+        return {
+          id: p.id,
+          x: hidden ? -500 : Math.round(p.x),
+          y: hidden ? -500 : Math.round(p.y),
+          s: p.searching && !hidden ? 1 : 0,
+          g: !hidden && now < p.ghostUntil ? 1 : 0,
+          a: p.avatar,
+          f: now < p.frozenUntil ? 1 : 0,
+          sp: p.channel && !hidden ? Math.min(1, p.searchProg / SEARCH_TIME) : 0,
+          spid: p.channel && !hidden ? p.channel.spotId : -1,
+        };
+      }),
+      spots: [...room.searched],
+      walls: room.dynWalls.map(w => ({ x: w.x, y: w.y, w: w.w, h: w.h, ttl: Math.ceil((w.expiresAt - now) / 1000) })),
+      powers: room.powerups,
+      me: {
+        walls: viewer.walls,
+        shield: viewer.shield ? 1 : 0,
+        ghost: now < viewer.ghostUntil ? 1 : 0,
+        ghostLeft: viewer.ghostUsed || !viewer.carrier ? 0 : 1,
+        goggles: now < viewer.gogglesUntil ? 1 : 0,
+        speed: now < viewer.speedUntil ? 1 : 0,
+        deposit: viewer.carrier ? Math.min(1, viewer.depositProg / DEPOSIT_TIME) : 0,
+        search: viewer.channel ? Math.min(1, viewer.searchProg / SEARCH_TIME) : 0,
+      },
+    };
+    try { wsSend(viewer.ws, JSON.stringify(payload)); } catch (e) { }
+  }
 }
 
-// ---------------- Bots ----------------
+// ---------------- Bots (human-like) ----------------
 function botThink(room, p, dt) {
   const now = Date.now();
   if (now < p.frozenUntil) { p.dx = 0; p.dy = 0; return; }
-  if (p.channel) { p.dx = 0; p.dy = 0; return; } // searching: stand still
+  if (p.channel) { p.dx = 0; p.dy = 0; return; }
+  if (now < p.pauseUntil) { p.dx = 0; p.dy = 0; return; }
+
+  // random human-like pauses
+  if (Math.random() < 0.004) { p.pauseUntil = now + 400 + crypto.randomInt(1200); return; }
+
+  // delayed expose (reveal-driven, with reaction time)
+  if (!p.exposeAt && now >= p.exposeCdUntil) {
+    if (now < p.revealUntil) {
+      const carrier = [...room.players.values()].find(q => q.carrier);
+      if (carrier && Math.hypot(p.x - carrier.x, p.y - carrier.y) < EXPOSE_RADIUS * 0.9) {
+        p.exposeAt = now + 500 + crypto.randomInt(700);
+      }
+    } else {
+      // hunch: someone lingering very close after the early game
+      const { other, dist } = nearestOther(room, p);
+      if (other && dist < 90) {
+        p.adjacentSince = p.adjacentSince || now;
+        const roundAge = (now - (room.endsAt - ROUND_SECONDS * 1000)) / 1000;
+        if (now - p.adjacentSince > 2500 && roundAge > 25 && Math.random() < 0.006) {
+          p.exposeAt = now + 600 + crypto.randomInt(900);
+        }
+      } else {
+        p.adjacentSince = 0;
+      }
+    }
+  }
 
   let tx, ty;
-  if (p.carrier) {
-    tx = MAP.vault.x + MAP.vault.w / 2;
-    ty = MAP.vault.y + MAP.vault.h / 2;
+
+  // grab a nearby power-up
+  let pu = null, pud = 220;
+  for (const q of room.powerups) {
+    const d = Math.hypot(p.x - q.x, p.y - q.y);
+    if (d < pud) { pud = d; pu = q; }
+  }
+
+  if (pu) {
+    tx = pu.x; ty = pu.y;
+  } else if (p.carrier) {
+    const { other, dist } = nearestOther(room, p);
+    // drop a wall between us and a close pursuer
+    if (other && dist < 150 && p.walls > 0 && now >= p.wallCdUntil && Math.random() < 0.3) {
+      p.fx = (p.x - other.x) / dist; p.fy = (p.y - other.y) / dist;
+      tryBuild(room, p);
+    }
+    // sometimes detour when watched
+    if (other && dist < 200 && Math.random() < 0.02) {
+      p.botTarget = { x: 300 + crypto.randomInt(1000), y: 150 + crypto.randomInt(700), until: now + 1500 };
+    }
+    if (p.botTarget && p.botTarget.until && now < p.botTarget.until) {
+      tx = p.botTarget.x; ty = p.botTarget.y;
+    } else {
+      p.botTarget = null;
+      tx = MAP.vault.x + MAP.vault.w / 2;
+      ty = MAP.vault.y + MAP.vault.h / 2;
+    }
   } else {
-    // nearest unsearched spot
     let best = null, bd = Infinity;
     for (const s of MAP.spots) {
       if (room.searched.has(s.id)) continue;
-      const d = Math.hypot(p.x - s.x, p.y - s.y);
+      const jitter = (p.id.charCodeAt(0) + s.id * 7) % 60 - 30;
+      const d = Math.hypot(p.x - s.x, p.y - s.y) + jitter;
       if (d < bd) { bd = d; best = s; }
     }
-    if (!best) {
-      // all searched: wander near center and expose carrier-ish behavior is overkill; just wander
+    if (!best || Math.random() < 0.002) {
       if (!p.botTarget || Math.hypot(p.x - p.botTarget.x, p.y - p.botTarget.y) < 40) {
         p.botTarget = { x: 300 + crypto.randomInt(1000), y: 150 + crypto.randomInt(700) };
       }
@@ -334,7 +560,6 @@ function botThink(room, p, dt) {
     }
   }
 
-  // simple unstick: if barely moving, sidestep
   if (p.lastX !== undefined && Math.hypot(p.x - p.lastX, p.y - p.lastY) < 0.5 && (p.dx || p.dy)) {
     p.stuck = (p.stuck || 0) + 1;
   } else {
@@ -354,9 +579,14 @@ function addBot(room) {
   const bot = {
     id, ws: null, bot: true, room,
     name: 'بوت ' + (++room.botSeq),
+    avatar: [...room.players.values()].length % AVATARS.length,
     x: 0, y: 0, dx: 0, dy: 0, wins: 0,
     carrier: false, channel: null, searchProg: 0, depositProg: 0,
     frozenUntil: 0, exposeCdUntil: 0, searching: false,
+    walls: WALLS_PER_ROUND, wallCdUntil: 0, shield: false,
+    speedUntil: 0, revealUntil: 0, ghostUsed: false, ghostUntil: 0,
+    gogglesUntil: 0,
+    fx: 1, fy: 0, pauseUntil: 0, exposeAt: 0, adjacentSince: 0,
   };
   room.players.set(id, bot);
   ensureHost(room);
@@ -368,7 +598,7 @@ function addBot(room) {
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon' };
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
+  if (req.url === '/health') { res.writeHead(200); res.end('ok v2'); return; }
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   const file = path.join(PUBLIC_DIR, path.normalize(urlPath));
@@ -463,7 +693,7 @@ function handleConnection(socket) {
       buf = buf.slice(off + maskLen + len);
 
       if (op === 8) { socket.end(); return; }
-      if (op === 9) { // ping -> pong
+      if (op === 9) {
         const h = Buffer.from([0x8A, payload.length]);
         socket.write(Buffer.concat([h, payload]));
         continue;
@@ -510,9 +740,14 @@ function handleMessage(msg, setPlayer, getPlayer, socket, leave) {
     const id = pid();
     const p = {
       id, ws: socket, bot: false, room, name,
+      avatar: room.players.size % AVATARS.length,
       x: 0, y: 0, dx: 0, dy: 0, wins: 0,
       carrier: false, channel: null, searchProg: 0, depositProg: 0,
       frozenUntil: 0, exposeCdUntil: 0, searching: false,
+      walls: WALLS_PER_ROUND, wallCdUntil: 0, shield: false,
+      speedUntil: 0, revealUntil: 0, ghostUsed: false, ghostUntil: 0,
+      gogglesUntil: 0,
+      fx: 1, fy: 0, pauseUntil: 0, exposeAt: 0, adjacentSince: 0,
     };
     room.players.set(id, p);
     ensureHost(room);
@@ -524,6 +759,15 @@ function handleMessage(msg, setPlayer, getPlayer, socket, leave) {
   if (!player) return;
   const room = player.room;
   switch (msg.t) {
+    case 'avatar': {
+      if (room.state !== 'lobby') break;
+      const ai = Math.floor(Number(msg.a));
+      if (ai >= 0 && ai < AVATARS.length && ![...room.players.values()].some(q => q.id !== player.id && q.avatar === ai)) {
+        player.avatar = ai;
+        lobbyState(room);
+      }
+      break;
+    }
     case 'input':
       player.dx = Math.max(-1, Math.min(1, Number(msg.dx) || 0));
       player.dy = Math.max(-1, Math.min(1, Number(msg.dy) || 0));
@@ -533,6 +777,12 @@ function handleMessage(msg, setPlayer, getPlayer, socket, leave) {
       break;
     case 'expose':
       tryExpose(room, player);
+      break;
+    case 'build':
+      tryBuild(room, player);
+      break;
+    case 'ghost':
+      tryGhost(room, player);
       break;
     case 'start':
       if (room.hostId === player.id && room.state === 'lobby' && room.players.size >= MIN_PLAYERS) {
