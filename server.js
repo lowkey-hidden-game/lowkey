@@ -74,10 +74,65 @@ const MAX_PLAYERS = 10;
 const ENDED_BACK_TO_LOBBY_MS = 9000;
 const POWER_TYPES = ['speed', 'shield', 'reveal', 'ghost', 'goggles'];
 const GONE_MS = 45000; // reconnect grace: player stands still, round continues
+const BOT_SIGHT = 300; // how far a bot can see players and spots (map units)
+
+// segment vs wall-rectangle intersection, used for line of sight
+function segHitsRect(x1, y1, x2, y2, r) {
+  const minX = r.x, maxX = r.x + r.w, minY = r.y, maxY = r.y + r.h;
+  const dx = x2 - x1, dy = y2 - y1;
+  let t0 = 0, t1 = 1;
+  for (const [p, q] of [[-dx, x1 - minX], [dx, maxX - x1], [-dy, y1 - minY], [dy, maxY - y1]]) {
+    if (p === 0) { if (q < 0) return false; }
+    else {
+      const t = q / p;
+      if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; }   // entering the slab
+      else { if (t < t0) return false; if (t < t1) t1 = t; }        // leaving the slab
+    }
+  }
+  return t0 < t1;
+}
+function hasLOS(room, x1, y1, x2, y2) {
+  for (const w of MAP.walls) if (segHitsRect(x1, y1, x2, y2, w)) return false;
+  for (const w of room.dynWalls) if (segHitsRect(x1, y1, x2, y2, w)) return false;
+  return true;
+}
+
+// a bot's private memory: only what IT saw, when, and which way it was heading
+function makeMem() {
+  return { spots: {}, players: {}, routes: {}, jukedBy: {} };
+}
+
+// update one bot's memory from its own senses: distance + line of sight, never secrets
+function botSense(room, p, now) {
+  if (!p.mem) p.mem = makeMem();
+  for (const q of room.players.values()) {
+    if (q.id === p.id || q.gone) continue;
+    if (now < q.ghostUntil) continue; // invisible = invisible, for bots too
+    const d = Math.hypot(p.x - q.x, p.y - q.y);
+    const seen = d < BOT_SIGHT && hasLOS(room, p.x, p.y, q.x, q.y);
+    if (seen) {
+      p.mem.players[q.id] = { x: q.x, y: q.y, vx: q.fx, vy: q.fy, at: now };
+      // route memory: 200-unit cells, last few cells this player passed through
+      const cell = ((q.x / 200) | 0) + ',' + ((q.y / 200) | 0);
+      const r = p.mem.routes[q.id] || (p.mem.routes[q.id] = []);
+      if (r[r.length - 1] !== cell) { r.push(cell); if (r.length > 6) r.shift(); }
+    } else if (p.mem.players[q.id] && now - p.mem.players[q.id].at < 2500) {
+      // lost sight of someone we were watching closely: remember who slipped us
+      if (d < BOT_SIGHT * 1.4) p.mem.jukedBy[q.id] = (p.mem.jukedBy[q.id] || 0) + 1;
+    }
+  }
+  for (const s of MAP.spots) {
+    const d = Math.hypot(p.x - s.x, p.y - s.y);
+    if (d < BOT_SIGHT * 0.75 && hasLOS(room, p.x, p.y, s.x, s.y)) {
+      p.mem.spots[s.id] = { searched: room.searched.has(s.id), at: now };
+    }
+  }
+}
+
 const AI_LEVELS = {
-  easy:   { reactMin: 1100, reactVar: 1600, hunchP: 0.002, lingerMs: 4500, pauseP: 0.008, wallP: 0,    detourP: 0.005, puRange: 120 },
-  normal: { reactMin: 500,  reactVar: 700,  hunchP: 0.006, lingerMs: 2500, pauseP: 0.004, wallP: 0.3,  detourP: 0.02,  puRange: 220 },
-  hard:   { reactMin: 250,  reactVar: 400,  hunchP: 0.014, lingerMs: 1500, pauseP: 0.002, wallP: 0.6,  detourP: 0.05,  puRange: 340 },
+  easy:   { reactMin: 1100, reactVar: 1600, hunchP: 0.002, lingerMs: 4500, pauseP: 0.008, wallP: 0,    detourP: 0.005, puRange: 120, memSec: 10, learnSpots: false, predictT: 0,   patterns: false, counterJuke: false },
+  normal: { reactMin: 500,  reactVar: 700,  hunchP: 0.006, lingerMs: 2500, pauseP: 0.004, wallP: 0.3,  detourP: 0.02,  puRange: 220, memSec: 20, learnSpots: true,  predictT: 0,   patterns: false, counterJuke: false },
+  hard:   { reactMin: 250,  reactVar: 400,  hunchP: 0.014, lingerMs: 1500, pauseP: 0.002, wallP: 0.6,  detourP: 0.05,  puRange: 340, memSec: 45, learnSpots: true,  predictT: 1.4, patterns: true,  counterJuke: true },
 };
 const AVATARS = ['🦊', '🐼', '🐸', '🦁', '🐰', '🐯', '🐵', '🦉', '🐙', '🐺', '🦄', '🐝'];
 const FORCE_POWER = process.env.FORCE_POWER || null;
@@ -486,6 +541,7 @@ function tick(room, dt) {
         p.searching = true;
         if (p.searchProg >= SEARCH_TIME) {
           room.searched.add(spot.id);
+          if (p.bot && p.mem) p.mem.spots[spot.id] = { searched: true, at: now, self: true };
           p.channel = null; p.searchProg = 0; p.searching = false;
           broadcast(room, { t: 'spot', id: spot.id });
           if (spot.id === room.treasureSpot) {
@@ -568,6 +624,8 @@ function botThink(room, p, dt) {
   const now = Date.now();
   const ai = p.ai || AI_LEVELS.normal;
   if (now < p.frozenUntil) { p.dx = 0; p.dy = 0; return; }
+  botSense(room, p, now); // see first; everything below uses only what this bot saw
+  const memFresh = e => e && now - e.at < ai.memSec * 1000;
   if (p.channel) { p.dx = 0; p.dy = 0; return; }
   if (now < p.pauseUntil) { p.dx = 0; p.dy = 0; return; }
 
@@ -584,7 +642,7 @@ function botThink(room, p, dt) {
     } else {
       // hunch: someone lingering very close after the early game
       const { other, dist } = nearestOther(room, p);
-      if (other && dist < 90) {
+      if (other && dist < 90 && hasLOS(room, p.x, p.y, other.x, other.y)) {
         p.adjacentSince = p.adjacentSince || now;
         const roundAge = (now - (room.endsAt - ROUND_SECONDS * 1000)) / 1000;
         if (now - p.adjacentSince > ai.lingerMs && roundAge > 25 && Math.random() < ai.hunchP) {
@@ -630,12 +688,54 @@ function botThink(room, p, dt) {
   } else {
     let best = null, bd = Infinity;
     for (const s of MAP.spots) {
-      if (room.searched.has(s.id)) continue;
+      const m = p.mem.spots[s.id];
+      if (m && m.searched && (m.self || ai.learnSpots) && now - m.at < ai.memSec * 1000) continue; // I searched it, or saw it searched
       const jitter = (p.id.charCodeAt(0) + s.id * 7) % 60 - 30;
       const d = Math.hypot(p.x - s.x, p.y - s.y) + jitter;
       if (d < bd) { bd = d; best = s; }
     }
+
+    // memory investigation: someone I saw recently is worth checking on
+    let suspect = null;
+    if (ai.learnSpots) {
+      let freshest = 0;
+      for (const [pid, e] of Object.entries(p.mem.players)) {
+        if (!memFresh(e)) continue;
+        if (e.at > freshest) { freshest = e.at; suspect = e; suspect.pid = pid; }
+      }
+    }
+    // hard bots cut off players who keep running the same route
+    if (ai.patterns) {
+      for (const [pid, route] of Object.entries(p.mem.routes)) {
+        const e = p.mem.players[pid];
+        if (!memFresh(e) || route.length < 4) continue;
+        const counts = {};
+        for (const c of route) counts[c] = (counts[c] || 0) + 1;
+        const repeated = Object.keys(counts).find(c => counts[c] >= 2);
+        if (repeated) {
+          const [cx, cy] = repeated.split(',').map(Number);
+          p.botTarget = { x: cx * 200 + 100, y: cy * 200 + 100, until: now + 4000 };
+          break;
+        }
+      }
+    }
+    if (!p.botTarget && suspect && Math.random() < 0.02) {
+      // go to where I last saw them; hard bots lead the target, and after being
+      // juked twice they stop falling for the same slip and cut much further ahead
+      const ageSec = (now - suspect.at) / 1000;
+      let lead = ai.predictT ? Math.min(ai.predictT, ageSec + 0.4) : 0;
+      const juked = p.mem.jukedBy[suspect.pid] || 0;
+      if (ai.counterJuke && juked > 0) {
+        // suspicion grows with each time this player slipped us, but deception
+        // never stops working entirely: even a notorious trickster keeps a 25% chance
+        const counterP = Math.min(0.75, juked * 0.25);
+        if (Math.random() < counterP) lead = Math.max(lead, Math.min(2.5, 0.8 + juked * 0.4));
+      }
+      p.botTarget = { x: suspect.x + suspect.vx * PLAYER_SPEED * lead, y: suspect.y + suspect.vy * PLAYER_SPEED * lead, until: now + 2500 };
+    }
+
     if (!best || Math.random() < 0.002) {
+      if (p.botTarget && p.botTarget.until && now > p.botTarget.until) p.botTarget = null;
       if (!p.botTarget || Math.hypot(p.x - p.botTarget.x, p.y - p.botTarget.y) < 40) {
         p.botTarget = { x: 300 + crypto.randomInt(1000), y: 150 + crypto.randomInt(700) };
       }
@@ -656,6 +756,7 @@ function botThink(room, p, dt) {
   }
   p.lastX = p.x; p.lastY = p.y;
 
+  p.lastGoal = { x: tx, y: ty };
   let ang = Math.atan2(ty - p.y, tx - p.x);
   if (p.stuck > 4) ang += (crypto.randomInt(2) ? 1 : -1) * Math.PI / 2;
   p.dx = Math.cos(ang);
@@ -688,7 +789,7 @@ function addBot(room) {
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') { res.writeHead(200); res.end('ok v4.5'); return; }
+  if (req.url === '/health') { res.writeHead(200); res.end('ok v4.6'); return; }
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   if (urlPath === '/classic') urlPath = '/classic.html';
@@ -950,6 +1051,11 @@ function handleMessage(msg, setPlayer, getPlayer, socket, leave) {
   }
 }
 
-server.listen(PORT, () => {
-  console.log('Lowkey server on :' + PORT);
-});
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log('Lowkey server on :' + PORT);
+  });
+}
+
+// exported for the automated fairness/memory test suite (test9)
+module.exports = { rooms, MAP, AI_LEVELS, makeRoom, addBot, botThink, botSense, startRound, hasLOS, BOT_SIGHT, tick };
