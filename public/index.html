@@ -347,7 +347,13 @@ function loadAssets() {
   manager.onProgress = (u, loaded) => { $('loadFill').style.width = Math.round(loaded / total * 100) + '%'; };
   const loader = new THREE.GLTFLoader(manager);
   let pending = total;
-  const done = () => { if (--pending <= 0) finishLoad(); };
+  const done = () => {
+    if (!assets.ready && Object.keys(assets.chars).length >= 6) {
+      assets.ready = true;
+      $('loading').classList.add('hidden'); // start playing; the rest streams in
+    }
+    if (--pending <= 0) finishLoad();
+  };
   CHAR_MODELS.forEach(n => loader.load('/models/characters/' + n + '.glb', g => { assets.chars[n] = g.scene; done(); }, undefined, done));
   ENV_MODELS.forEach(n => loader.load('/models/env/' + n + '.glb', g => { assets.env[n] = g.scene; done(); }, undefined, done));
   setTimeout(finishLoad, 15000); // never trap the player on the loading screen
@@ -447,8 +453,8 @@ function makeGlbPlayer(p) {
     new THREE.MeshBasicMaterial({ map: blobTexture(), transparent: true, opacity: 0.5, depthWrite: false }));
   blob.rotation.x = -Math.PI / 2; blob.position.y = 0.6; grp.add(blob);
   // noise ring (the "sound exposes you" mechanic)
-  const nring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.045, 6, 40),
-    new THREE.MeshBasicMaterial({ color: 0xffc36b, transparent: true, opacity: 0 }));
+  const nring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.025, 6, 48),
+    new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
   nring.rotation.x = Math.PI / 2; nring.position.y = 1.5; nring.visible = false; grp.add(nring);
 
   // pro animation clips (CC0 Quaternius library, retargeted offline)
@@ -461,7 +467,7 @@ function makeGlbPlayer(p) {
   }
 
   const label = nameSprite(info.name || '?', p.id === myId ? '#7ef0c1' : NEON_TAG[info.avatar % NEON_TAG.length]);
-  label.position.y = 58;
+  label.position.y = 52;
   grp.add(label);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(24, 3, 6, 20), new THREE.MeshBasicMaterial({ color: 0xffd34d }));
   ring.rotation.x = Math.PI / 2; ring.position.y = 2; ring.visible = false; grp.add(ring);
@@ -531,9 +537,9 @@ function initGL() {
   addEventListener('mouseup', () => { camMouse = false; });
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0b1226);
-  scene.fog = new THREE.Fog(0x0b1226, 900, 2900);
+  scene.fog = new THREE.Fog(0x0a1020, 700, 2400);
   camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 10, 6000);
-  scene.add(new THREE.HemisphereLight(0x9fc0ff, 0x40342a, 0.45));
+  scene.add(new THREE.HemisphereLight(0x8fb0e8, 0x35291f, 0.34));
   const dir = new THREE.DirectionalLight(0xfff2d9, 1.0);
   dir.position.set(400, 800, 300);
   scene.add(dir);
@@ -599,7 +605,7 @@ function nameSprite(text, color) {
   const tex = new THREE.CanvasTexture(c);
   tex.minFilter = THREE.LinearFilter;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-  sp.scale.set(80, 24, 1);
+  sp.scale.set(62, 19, 1);
   return sp;
 }
 const NEON_TAG = ['#7ef0c1', '#ff8ad4', '#ffd34d', '#7ee0ff', '#c39bff', '#ff9d6b', '#8dff6e', '#ff6e8d'];
@@ -811,13 +817,17 @@ function buildWorld() {
 
   // red alarm beacons (reference art): pulsing point lights + glow domes
   for (const [ax, az] of [[0.22, 0.25], [0.78, 0.25], [0.22, 0.78], [0.78, 0.78]]) {
-    const l = new THREE.PointLight(0xff2a2a, 0, 1500, 0);
+    const l = new THREE.PointLight(0xff2a2a, 0, 950, 0);
     l.position.set(map.w * ax, 150, map.h * az);
     scene.add(l);
-    const dome = glowSprite('rgb(255,60,60)', 120, 0.55);
-    dome.position.set(map.w * ax, 150, map.h * az);
+    const fix = new THREE.Mesh(new THREE.SphereGeometry(9, 12, 8),
+      new THREE.MeshBasicMaterial({ color: 0xff3030 }));
+    fix.position.set(map.w * ax, 128, map.h * az);
+    scene.add(fix);
+    const dome = glowSprite('rgb(255,60,60)', 150, 0.6);
+    dome.position.set(map.w * ax, 128, map.h * az);
     scene.add(dome);
-    alarmLights.push({ l, dome });
+    alarmLights.push({ l, dome, fix });
   }
   // desktop quality tier: real-time shadows
   if (HIQ && dirLight) {
@@ -837,6 +847,26 @@ function buildWorld() {
   sky.position.set(map.w / 2, 0, map.h / 2);
   scene.add(sky);
 
+  // stars
+  {
+    const n = 260, pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const th = Math.random() * Math.PI * 2, ph2 = Math.random() * 1.1;
+      const r = 3900;
+      pos[i * 3] = Math.cos(th) * Math.cos(ph2) * r;
+      pos[i * 3 + 1] = 200 + Math.sin(ph2) * r;
+      pos[i * 3 + 2] = Math.sin(th) * Math.cos(ph2) * r;
+    }
+    const g2 = new THREE.BufferGeometry();
+    g2.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const stars = new THREE.Points(g2, new THREE.PointsMaterial({
+      color: 0xcfe2ff, size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0.7,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    }));
+    stars.position.set(map.w / 2, 0, map.h / 2);
+    scene.add(stars);
+  }
+
   // drifting dust motes (cheap ambience)
   {
     const n = 140, pos = new Float32Array(n * 3);
@@ -848,7 +878,8 @@ function buildWorld() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     dustPts = new THREE.Points(g, new THREE.PointsMaterial({
-      color: 0x9fd8ff, size: 2.0, transparent: true, opacity: 0.16,
+      map: glowTexture('rgb(159,216,255)'), color: 0x9fd8ff, size: 7,
+      transparent: true, opacity: 0.5,
       blending: THREE.AdditiveBlending, depthWrite: false,
     }));
     dustPts.position.set(map.w / 2, 0, map.h / 2);
@@ -859,7 +890,7 @@ function buildWorld() {
   const tl = new THREE.TextureLoader();
   const floorTex = tl.load('/textures/floor.jpg');
   floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-  floorTex.repeat.set(map.w / 340, map.h / 340);
+  floorTex.repeat.set(map.w / 230, map.h / 230);
   floorTex.encoding = THREE.sRGBEncoding;
   const floorN = tl.load('/textures/floor-normal.jpg');
   floorN.wrapS = floorN.wrapT = THREE.RepeatWrapping;
@@ -868,14 +899,14 @@ function buildWorld() {
   floorR.wrapS = floorR.wrapT = THREE.RepeatWrapping;
   floorR.repeat.copy(floorTex.repeat);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(map.w, map.h),
-    new THREE.MeshStandardMaterial({ map: floorTex, normalMap: floorN, roughnessMap: floorR, roughness: 1, metalness: 0.22, color: 0x66718a }));
+    new THREE.MeshStandardMaterial({ map: floorTex, normalMap: floorN, roughnessMap: floorR, roughness: 1, metalness: 0.22, color: 0x4d5668 }));
   floor.receiveShadow = HIQ;
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(map.w / 2, 0, map.h / 2);
   scene.add(floor);
 
   // warehouse pallet racks for interior walls, metal panels for the outer walls
-  const panelMat = new THREE.MeshLambertMaterial({ color: 0x2e3648 });
+  const panelMat = new THREE.MeshLambertMaterial({ color: 0x252c3c });
   const postMat = new THREE.MeshLambertMaterial({ color: 0x37404e });
   const beamMat = new THREE.MeshLambertMaterial({ color: 0x2fbfa8 });
   const neonMat = new THREE.MeshBasicMaterial({ color: 0x35f0d0 });
@@ -1160,9 +1191,9 @@ function tick() {
       if (nl > 0 && !p.f) {
         const ph = (now % 900) / 900;
         m.userData.nring.visible = true;
-        m.userData.nring.scale.setScalar(10 + ph * (nl === 2 ? 220 : 120));
-        m.userData.nring.material.opacity = 0.5 * (1 - ph);
-        m.userData.nring.material.color.setHex(nl === 2 ? 0xff6a3a : 0xffb347);
+        m.userData.nring.scale.setScalar(12 + ph * (nl === 2 ? 200 : 105));
+        m.userData.nring.material.opacity = 0.85 * (1 - ph) * (1 - ph);
+        m.userData.nring.material.color.setHex(nl === 2 ? 0xff5a26 : 0xff8c2a);
       } else m.userData.nring.visible = false;
     }
     m.userData.rmark.visible = (revealId === p.id && now < revealUntil);
@@ -1201,7 +1232,7 @@ function tick() {
     if (state.left !== undefined && state.left <= 30 && phase === 'game') alarmBoost = Math.max(alarmBoost, 0.6);
     alarmBoost = Math.max(0, alarmBoost - dtSec * 0.3);
     const pulse = (Math.sin(now / 320) + 1) / 2;
-    const base = 0.5 + alarmBoost * 1.4;
+    const base = 0.22 + alarmBoost * 1.1;
     for (const a of alarmLights) {
       a.l.intensity = base * pulse;
       a.dome.material.opacity = 0.2 + 0.45 * Math.min(1, base) * pulse;
@@ -1254,8 +1285,8 @@ function tick() {
     const pm = playerMeshes.get(myId);
     if (camYaw === null) camYaw = pm ? pm.rotation.y : Math.PI;
     const fx = Math.sin(camYaw), fz = Math.cos(camYaw);
-    const hd = 330 - camPitch * 120;
-    const ch = 110 + camPitch * 230;
+    const hd = 195 - camPitch * 85;
+    const ch = 62 + camPitch * 150;
     if (!camPos) camPos = { x: mine.x - fx * hd, z: mine.y - fz * hd };
     camPos.x += (mine.x - fx * hd - camPos.x) * 0.14;
     camPos.z += (mine.y - fz * hd - camPos.z) * 0.14;
