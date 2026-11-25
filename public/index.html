@@ -54,6 +54,14 @@
   #minimap { position: fixed; z-index: 7; top: 64px; left: 12px; width: 128px; height: 80px;
     border-radius: 12px; border: 1px solid rgba(255,255,255,.18);
     background: rgba(8,12,28,.72); box-shadow: 0 4px 14px rgba(0,0,0,.35); pointer-events: none; }
+  #helpOverlay { position: fixed; inset: 0; z-index: 30; background: #060b1a; overflow-y: auto; padding: 22px 16px 44px; }
+  .helpCard { max-width: 540px; margin: 0 auto; }
+  .helpCard h2 { text-align: center; margin: 4px 0 14px; }
+  .helpSec { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 12px 14px; margin: 10px 0; }
+  .helpSec h3 { margin: 0 0 6px; font-size: 16px; color: #ffd34d; }
+  .helpSec p, .helpSec li { font-size: 14.5px; line-height: 1.9; color: #dbe4ff; margin: 0; }
+  .helpSec ul { padding-right: 18px; margin: 0; }
+  #btnCloseHelp { display: block; margin: 16px auto 0; }
   @keyframes pop { 0% { transform: scale(.6); opacity: 0; } 70% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
   #toast:not(.hidden) { animation: pop .18s ease-out; }
   #btnSearch { left: 16px; bottom: 184px; background: #7ef0c1; }
@@ -94,6 +102,7 @@
   <input id="codeIn" maxlength="4" placeholder="كود الأوضة (لو معاك)" autocomplete="off" style="text-transform:uppercase">
   <button id="btnJoin">ادخل / اعمل أوضة</button>
   <div id="joinErr" style="color:#ff6b6b;font-size:14px"></div>
+  <a class="classicLink" id="linkHelp">❓ إزاي تلعب؟</a>
   <a class="classicLink" href="/classic">النسخة الكلاسيك 2D</a>
 </div>
 
@@ -101,6 +110,7 @@
   <h2>الأوضة</h2>
   <div id="roomCode"></div>
   <button class="ghost" id="btnShare">📤 ابعت اللينك لصحابك</button>
+  <button class="ghost" id="btnHelp">❓ إزاي تلعب؟</button>
   <div id="plist"></div>
   <p class="sub" style="margin:10px 0 2px">اختار شخصيتك:</p>
   <div id="avRow"></div>
@@ -124,6 +134,54 @@
 <div id="toast" class="hidden"><span id="toastTxt"></span></div>
 <div id="vaultArrow" class="hidden">➤</div>
 <canvas id="minimap" class="hidden" width="256" height="160"></canvas>
+<div id="helpOverlay" class="hidden">
+  <div class="helpCard">
+    <h2>إزاي تلعب Lowkey 🫣</h2>
+    <div class="helpSec">
+      <h3>🎯 الهدف</h3>
+      <p>في كنز مخبّي في صندوق من الصناديق. دوّر عليه.. واللي يلاقيه يبقى <b>الحرامي</b>، ومحدش بيعرف مين هو غيره هو بس!</p>
+    </div>
+    <div class="helpSec">
+      <h3>🏆 تكسب إزاي</h3>
+      <ul>
+        <li><b>لو انت الحرامي:</b> وصّل الكنز للخزنة (المربع الدهبي في الميني ماب، وعمود النور الدهبي) من غير ما حد يكشفك.</li>
+        <li><b>لو مش الحرامي:</b> راقب مين ماشي مشبوه، قرب منه واضغط <b>اكشف</b>. لو صح، كسبت!</li>
+      </ul>
+    </div>
+    <div class="helpSec">
+      <h3>⚠️ خد بالك</h3>
+      <ul>
+        <li>كشف غلط = بتتجمد ١٢ ثانية. متكشفش غير وانت متأكد!</li>
+        <li>الكنز بيغيّر مكانه كل شوية طالما محدش لقاه.</li>
+        <li>الوقت خلص = الجولة بتخلص من غير فايز.</li>
+      </ul>
+    </div>
+    <div class="helpSec">
+      <h3>🕹️ التحكم</h3>
+      <ul>
+        <li>الجويستيك اللي تحت على الشمال: الحركة.</li>
+        <li>اسحب أي حتة فاضية في الشاشة: تلفّ الكاميرا.</li>
+        <li>قرب من صندوق يظهرلك زرار <b>فتّش</b>، وقرب من لاعيب يظهرلك <b>اكشف</b>.</li>
+        <li>زرار <b>ابني</b> يحط حيطة تخبّيك من اللي وراك.</li>
+      </ul>
+    </div>
+    <div class="helpSec">
+      <h3>✨ الباورات</h3>
+      <ul>
+        <li>⚡ <b>سرعة:</b> بيجري أسرع ١٢ ثانية.</li>
+        <li>🛡️ <b>درع:</b> بيصدّ عنك أول محاولة كشف.</li>
+        <li>👁️ <b>كاشف:</b> يوريك مين الحرامي ١٢ ثانية.</li>
+        <li>👻 <b>اختفاء:</b> تختفي عن عيون الكل ١٢ ثانية.</li>
+        <li>🥽 <b>نظارة:</b> تشوف اللي مختفي ١٢ ثانية.</li>
+      </ul>
+    </div>
+    <div class="helpSec">
+      <h3>🗺️ الميني ماب</h3>
+      <p>المثلث الأخضر <b>انت</b> • النقط الزرقا <b>اللاعيبة</b> • النقط البيضا <b>أماكن لسه متدورتش</b> • المربع الدهبي <b>الخزنة</b>.</p>
+    </div>
+    <button id="btnCloseHelp">فهمت، يلا بينا 🎮</button>
+  </div>
+</div>
 <button id="btnMute" class="hidden">🔊</button>
 
 <div id="stick" class="hidden"><div id="knob"></div></div>
@@ -208,6 +266,7 @@ function handle(m, joinCb) {
       buildWorld();
       showGame();
       AudioFX.unlock(); AudioFX.ambientStart(); AudioFX.alarmStop();
+      coachHints();
       break;
     case 'state':
       state = m;
@@ -1707,6 +1766,23 @@ $('btnExpose').addEventListener('click', () => ws && ws.readyState === 1 && ws.s
 $('btnBuild').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'build' })));
 $('btnGhost').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'ghost' })));
 let crouchOn = false;
+$('linkHelp').addEventListener('click', () => $('helpOverlay').classList.remove('hidden'));
+$('btnHelp').addEventListener('click', () => $('helpOverlay').classList.remove('hidden'));
+$('btnCloseHelp').addEventListener('click', () => $('helpOverlay').classList.add('hidden'));
+
+// first-games coach hints (short toasts, first 2 rounds only)
+function coachHints() {
+  let seen = 0;
+  try { seen = +(localStorage.getItem('lk_games') || 0); localStorage.setItem('lk_games', String(seen + 1)); } catch (e) { }
+  if (seen >= 2) return;
+  const hints = [
+    [2600, '🕹️ الجويستيك اللي تحت يمشّيك.. واسحب الشاشة تلفّ الكاميرا'],
+    [9800, '📦 قرب من أي صندوق واضغط "فتّش".. الكنز في واحد منهم'],
+    [17000, '🤫 اللي يلاقي الكنز يوصّله للمربع الدهبي في الميني ماب من غير ما حد يشك فيه'],
+  ];
+  hints.forEach(([ms, txt]) => setTimeout(() => { if (phase === 'game') toast(txt); }, ms));
+}
+
 $('btnMute').addEventListener('click', () => {
   $('btnMute').textContent = AudioFX.toggleMute() ? '🔇' : '🔊';
 });
