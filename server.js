@@ -595,10 +595,10 @@ function addBot(room) {
 }
 
 // ---------------- HTTP + WebSocket ----------------
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') { res.writeHead(200); res.end('ok v3.2'); return; }
+  if (req.url === '/health') { res.writeHead(200); res.end('ok v3.3'); return; }
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   if (urlPath === '/classic') urlPath = '/classic.html';
@@ -609,6 +609,7 @@ const server = http.createServer((req, res) => {
     const ext = path.extname(file);
     const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
     if (ext === '.html') headers['Cache-Control'] = 'no-cache, must-revalidate';
+    else if (urlPath.startsWith('/models/') || urlPath.startsWith('/vendor/')) headers['Cache-Control'] = 'public, max-age=604800, immutable';
     res.writeHead(200, headers);
     res.end(data);
   });

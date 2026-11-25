@@ -41,15 +41,23 @@
     border-radius: 24px; padding: 9px 22px; font-size: 16px; box-shadow: 0 0 18px rgba(255,211,77,.5); }
   #toast { position: fixed; bottom: 190px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 5; }
   #toast span { background: rgba(20,26,42,.92); border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 8px 18px; font-size: 15px; color: #cfe0ff; }
-  .actbtn { position: fixed; z-index: 6; width: 76px; height: 76px; border-radius: 50%; font-size: 14px;
+  #gl canvas { touch-action: none; }
+  .actbtn { position: fixed; z-index: 6; width: 66px; height: 66px; border-radius: 50%; font-size: 13px;
     padding: 0; box-shadow: 0 4px 14px rgba(0,0,0,.45); line-height: 1.2; }
   .actbtn small { font-size: 12px; }
-  #btnSearch { left: 18px; bottom: 128px; background: #7ef0c1; }
-  #btnExpose { left: 104px; bottom: 46px; background: #ff6b6b; color: #fff; }
-  #btnBuild { left: 18px; bottom: 216px; background: #c98d4b; color: #fff; }
-  #btnGhost { left: 104px; bottom: 134px; background: #b48cff; color: #fff; }
-  #stick { position: fixed; z-index: 4; right: 26px; bottom: 60px; width: 130px; height: 130px;
+  #btnSearch { left: 16px; bottom: 184px; background: #7ef0c1; }
+  #btnGhost { left: 94px; bottom: 184px; background: #b48cff; color: #fff; }
+  #btnBuild { left: 16px; bottom: 262px; background: #c98d4b; color: #fff; }
+  #btnExpose { left: 94px; bottom: 262px; background: #ff6b6b; color: #fff; }
+  #stick { position: fixed; z-index: 4; left: 20px; bottom: 34px; width: 130px; height: 130px;
     border-radius: 50%; background: rgba(255,255,255,.06); border: 2px solid rgba(255,255,255,.15); }
+  #camHint { position: fixed; z-index: 4; right: 22px; bottom: 60px; max-width: 150px; text-align: center;
+    color: rgba(207,224,255,.75); font-size: 13px; line-height: 1.6; pointer-events: none;
+    transition: opacity 1s; }
+  #loading { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; gap: 16px;
+    align-items: center; justify-content: center; background: radial-gradient(900px 600px at 50% 30%, #16203c 0%, #0d1120 65%); }
+  #loadBar { width: 220px; height: 10px; border-radius: 6px; background: #1b2438; overflow: hidden; }
+  #loadFill { height: 100%; width: 0%; border-radius: 6px; background: linear-gradient(90deg,#35f0d0,#7ee0ff); transition: width .2s; }
   #knob { position: absolute; width: 54px; height: 54px; border-radius: 50%;
     background: rgba(255,255,255,.25); left: 38px; top: 38px; }
   #endOverlay { position: fixed; inset: 0; background: rgba(8,11,20,.9); z-index: 10;
@@ -103,6 +111,12 @@
 <div id="toast" class="hidden"><span id="toastTxt"></span></div>
 
 <div id="stick" class="hidden"><div id="knob"></div></div>
+<div id="camHint" class="hidden">👆 اسحب أي حتة فاضية عشان تلفّ الكاميرا</div>
+<div id="loading">
+  <h1>Lowkey 🫣</h1>
+  <p class="sub">بنجهّز الجرافيك…</p>
+  <div id="loadBar"><div id="loadFill"></div></div>
+</div>
 <button id="btnSearch" class="actbtn hidden">🔍<br>دوّر</button>
 <button id="btnExpose" class="actbtn hidden">🫵<br>اكشف</button>
 <button id="btnBuild" class="actbtn hidden">🧱<br><small id="wallCount">٣</small></button>
@@ -115,6 +129,8 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="/vendor/GLTFLoader.js"></script>
+<script src="/vendor/SkeletonUtils.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -222,6 +238,13 @@ function handle(m, joinCb) {
 }
 
 // ---------- screens ----------
+function hideCamHint() {
+  if (camHintShown) return;
+  camHintShown = true;
+  $('camHint').style.opacity = '0';
+  setTimeout(() => $('camHint').classList.add('hidden'), 1100);
+}
+
 function show(id) {
   ['join', 'lobby'].forEach(s => $(s).classList.toggle('hidden', s !== id));
   const inGame = id === null;
@@ -229,6 +252,8 @@ function show(id) {
   $('hud').classList.toggle('hidden', !inGame);
   $('effects').classList.toggle('hidden', !inGame);
   $('stick').classList.toggle('hidden', !inGame);
+  if (inGame && !camHintShown) $('camHint').classList.remove('hidden');
+  if (!inGame) $('camHint').classList.add('hidden');
   if (!inGame) ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost'].forEach(b => $(b).classList.add('hidden'));
 }
 function showLobby() { show('lobby'); $('endOverlay').classList.add('hidden'); }
@@ -293,6 +318,136 @@ const SKIN_TONES = [0xffe0bd, 0xf1c27d, 0xc68642, 0x8d5524];
 const HAIR_COLORS = [0x2b2b2b, 0x5a3a1e, 0x8a4b12, 0xd9c07a, 0x777777, 0xb03030];
 const PANTS_COLORS = [0x2f3a56, 0x3a3a3a, 0x4a3828, 0x274156, 0x555f6e, 0x63342e];
 
+// ---------- glTF assets (CC0 Quaternius packs) ----------
+const CHAR_MODELS = ['M_Casual', 'M_Casual2', 'M_Punk', 'M_Suit', 'M_Swat', 'M_Worker', 'F_Casual', 'F_Soldier', 'F_Worker', 'F_SciFi', 'F_Suit', 'F_Punk'];
+const ENV_MODELS = ['Props_Crate', 'Props_CrateLong', 'Props_ContainerFull', 'Props_Computer', 'Props_Shelf', 'Props_Vessel', 'Props_Capsule', 'Props_Chest', 'Props_Pod', 'Props_Teleporter_1', 'Column_1', 'Door_Double'];
+const assets = { ready: false, chars: {}, env: {} };
+let loadFinished = false;
+function finishLoad() {
+  if (loadFinished) return;
+  loadFinished = true;
+  assets.ready = Object.keys(assets.chars).length >= 6;
+  $('loading').classList.add('hidden');
+}
+function loadAssets() {
+  if (!window.THREE || !THREE.GLTFLoader) { finishLoad(); return; }
+  const total = CHAR_MODELS.length + ENV_MODELS.length;
+  const manager = new THREE.LoadingManager();
+  manager.onProgress = (u, loaded) => { $('loadFill').style.width = Math.round(loaded / total * 100) + '%'; };
+  const loader = new THREE.GLTFLoader(manager);
+  let pending = total;
+  const done = () => { if (--pending <= 0) finishLoad(); };
+  CHAR_MODELS.forEach(n => loader.load('/models/characters/' + n + '.glb', g => { assets.chars[n] = g.scene; done(); }, undefined, done));
+  ENV_MODELS.forEach(n => loader.load('/models/env/' + n + '.glb', g => { assets.env[n] = g.scene; done(); }, undefined, done));
+  setTimeout(finishLoad, 15000); // never trap the player on the loading screen
+}
+
+// clone a glb scene, scale so its height is targetH, feet on y=0, centered on x/z
+function normalizedClone(src, targetH) {
+  const obj = (THREE.SkeletonUtils ? THREE.SkeletonUtils.clone(src) : src.clone(true));
+  const box = new THREE.Box3().setFromObject(obj);
+  const h = (box.max.y - box.min.y) || 1;
+  const s = targetH / h;
+  obj.scale.setScalar(s);
+  obj.position.set(-(box.min.x + box.max.x) / 2 * s, -box.min.y * s, -(box.min.z + box.max.z) / 2 * s);
+  const grp = new THREE.Group();
+  grp.add(obj);
+  // standard materials render near-black without an env map; swap to lambert with same colors
+  grp.traverse(o => {
+    if (o.isMesh && o.material && o.material.isMeshStandardMaterial) {
+      const m = o.material;
+      o.material = new THREE.MeshLambertMaterial({ color: m.color ? m.color.clone() : 0xffffff, map: m.map || null, skinning: !!o.isSkinnedMesh });
+    }
+  });
+  return grp;
+}
+
+// note: GLTFLoader sanitizes node names (strips dots), so 'UpperArm.L' becomes 'UpperArmL'
+const BONE_NAMES = {
+  hips: 'Hips', torso: 'Torso', chest: 'Chest', neck: 'Neck', head: 'Head',
+  uLL: 'UpperLegL', uLR: 'UpperLegR', lLL: 'LowerLegL', lLR: 'LowerLegR',
+  uAL: 'UpperArmL', uAR: 'UpperArmR', lAL: 'LowerArmL', lAR: 'LowerArmR'
+};
+function restPose(bones) {
+  // bring arms down from the T-pose to the sides
+  if (bones.uAL) bones.uAL.rotateX(-1.12);
+  if (bones.uAR) bones.uAR.rotateX(-1.12);
+  if (bones.lAL) bones.lAL.rotateX(-0.3);
+  if (bones.lAR) bones.lAR.rotateX(-0.3);
+}
+function collectBones(grp) {
+  const bones = {}, rest = {};
+  for (const k in BONE_NAMES) {
+    const b = grp.getObjectByName(BONE_NAMES[k]);
+    if (b) bones[k] = b;
+  }
+  restPose(bones);
+  for (const k in bones) rest[k] = bones[k].quaternion.clone();
+  return { bones, rest };
+}
+function setBone(bones, rest, k, axis, ang) {
+  const b = bones[k];
+  if (!b) return;
+  b.quaternion.copy(rest[k]);
+  if (axis === 'x') b.rotateX(ang); else if (axis === 'y') b.rotateY(ang); else b.rotateZ(ang);
+}
+function animateRig(u, moving, dist, now) {
+  const B = u.bones, R = u.rest;
+  if (moving) {
+    u.bonePhase += dist * 0.075;
+    const s = Math.sin(u.bonePhase), c = Math.cos(u.bonePhase);
+    setBone(B, R, 'uLL', 'z', -s * 0.55);
+    setBone(B, R, 'uLR', 'z', s * 0.55);
+    setBone(B, R, 'lLL', 'z', -Math.max(0, c) * 0.75);
+    setBone(B, R, 'lLR', 'z', -Math.max(0, -c) * 0.75);
+    setBone(B, R, 'uAL', 'y', s * 0.45);
+    setBone(B, R, 'uAR', 'y', -s * 0.45);
+    setBone(B, R, 'torso', 'z', s * 0.05);
+  } else {
+    // idle: settle back to rest + gentle breathing
+    const br = Math.sin(now / 700) * 0.035;
+    for (const k in B) { B[k].quaternion.copy(R[k]); }
+    if (B.chest) B.chest.rotateX(br);
+    if (B.uAL) B.uAL.rotateX(br * 0.6);
+    if (B.uAR) B.uAR.rotateX(br * 0.6);
+  }
+}
+
+function makeGlbPlayer(p) {
+  if (!assets.ready) return null;
+  const info = roster[p.id] || {};
+  const ai = info.avatar !== undefined ? info.avatar : 0;
+  const src = assets.chars[CHAR_MODELS[ai % CHAR_MODELS.length]];
+  if (!src) return null;
+  const grp = normalizedClone(src, 46);
+  const mats = [];
+  grp.traverse(o => {
+    if (o.isMesh) {
+      o.material = o.material.clone();
+      o.frustumCulled = false; // skinned bounds don't follow bones
+      mats.push(o.material);
+    }
+  });
+  const { bones, rest } = collectBones(grp);
+
+  const label = nameSprite((AVATARS[info.avatar] || '') + ' ' + (info.name || '?'), p.id === myId ? '#7ef0c1' : '#ffb98a');
+  label.position.y = 58;
+  grp.add(label);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(24, 3, 6, 20), new THREE.MeshBasicMaterial({ color: 0xffd34d }));
+  ring.rotation.x = Math.PI / 2; ring.position.y = 2; ring.visible = false; grp.add(ring);
+  const rmark = new THREE.Mesh(new THREE.TorusGeometry(30, 4, 6, 20), new THREE.MeshBasicMaterial({ color: 0xff4d4d }));
+  rmark.rotation.x = Math.PI / 2; rmark.position.y = 52; rmark.visible = false; grp.add(rmark);
+  const ice = new THREE.Mesh(new THREE.BoxGeometry(44, 56, 44), new THREE.MeshLambertMaterial({ color: 0x9ecbff, transparent: true, opacity: 0.45 }));
+  ice.position.y = 26; ice.visible = false; grp.add(ice);
+  const barBg = new THREE.Mesh(new THREE.BoxGeometry(50, 6, 2), new THREE.MeshBasicMaterial({ color: 0x22304f }));
+  barBg.position.y = 68; barBg.visible = false; grp.add(barBg);
+  const barFg = new THREE.Mesh(new THREE.BoxGeometry(50, 6, 2), new THREE.MeshBasicMaterial({ color: 0x7ef0c1 }));
+  barFg.position.y = 68; barFg.visible = false; grp.add(barFg);
+
+  grp.userData = { ring, rmark, ice, barBg, barFg, mats, bones, rest, bonePhase: 0 };
+  return grp;
+}
+
 function initGL() {
   if (renderer || glFailed) return !glFailed;
   if (!window.THREE) { glFailed = true; fallback2d(); return false; }
@@ -304,12 +459,44 @@ function initGL() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.setSize(innerWidth, innerHeight);
   $('gl').appendChild(renderer.domElement);
+  // free camera orbit: drag anywhere on the world (right thumb on mobile, mouse on desktop)
+  const cv = renderer.domElement;
+  cv.addEventListener('touchstart', e => {
+    if (camId !== null) return;
+    const t = e.changedTouches[0];
+    camId = t.identifier; camLX = t.clientX; camLY = t.clientY;
+    hideCamHint();
+  }, { passive: true });
+  cv.addEventListener('touchmove', e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier !== camId) continue;
+      if (camYaw === null) camYaw = Math.PI;
+      camYaw -= (t.clientX - camLX) * 0.0056;
+      camPitch = Math.min(1, Math.max(0.02, camPitch + (t.clientY - camLY) * 0.0038));
+      camLX = t.clientX; camLY = t.clientY;
+      e.preventDefault();
+    }
+  }, { passive: false });
+  const camEnd = e => {
+    for (const t of e.changedTouches) if (t.identifier === camId) camId = null;
+  };
+  cv.addEventListener('touchend', camEnd);
+  cv.addEventListener('touchcancel', camEnd);
+  cv.addEventListener('mousedown', e => { camMouse = true; camLX = e.clientX; camLY = e.clientY; hideCamHint(); });
+  addEventListener('mousemove', e => {
+    if (!camMouse) return;
+    if (camYaw === null) camYaw = Math.PI;
+    camYaw -= (e.clientX - camLX) * 0.0056;
+    camPitch = Math.min(1, Math.max(0.02, camPitch + (e.clientY - camLY) * 0.0038));
+    camLX = e.clientX; camLY = e.clientY;
+  });
+  addEventListener('mouseup', () => { camMouse = false; });
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1c2947);
-  scene.fog = new THREE.Fog(0x1c2947, 1100, 3200);
+  scene.background = new THREE.Color(0x101a33);
+  scene.fog = new THREE.Fog(0x101a33, 1100, 3200);
   camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 10, 6000);
   scene.add(new THREE.AmbientLight(0xffffff, 0.75));
-  const dir = new THREE.DirectionalLight(0xfff2d9, 0.85);
+  const dir = new THREE.DirectionalLight(0xfff2d9, 1.0);
   dir.position.set(400, 800, 300);
   scene.add(dir);
   requestAnimationFrame(tick);
@@ -326,7 +513,7 @@ function floorTexture() {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 320;
   const g = c.getContext('2d');
-  g.fillStyle = '#3d4149'; g.fillRect(0, 0, 512, 320);
+  g.fillStyle = '#242b3d'; g.fillRect(0, 0, 512, 320);
   // stains
   for (let i = 0; i < 40; i++) {
     g.fillStyle = 'rgba(0,0,0,' + (0.03 + Math.random() * 0.06) + ')';
@@ -337,7 +524,7 @@ function floorTexture() {
   for (let x = 0; x <= 512; x += 64) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 320); g.stroke(); }
   for (let y = 0; y <= 320; y += 64) { g.beginPath(); g.moveTo(0, y); g.lineTo(512, y); g.stroke(); }
   // yellow safety lanes
-  g.strokeStyle = 'rgba(230,190,60,.35)'; g.lineWidth = 5;
+  g.strokeStyle = 'rgba(80,230,220,.30)'; g.lineWidth = 5;
   g.setLineDash([24, 18]);
   g.beginPath(); g.moveTo(0, 160); g.lineTo(512, 160); g.stroke();
   g.beginPath(); g.moveTo(256, 0); g.lineTo(256, 320); g.stroke();
@@ -363,6 +550,8 @@ function nameSprite(text, color) {
 }
 
 function makePlayerMesh(p) {
+  const glb = makeGlbPlayer(p);
+  if (glb) return glb;
   const info = roster[p.id] || {};
   const ai = info.avatar !== undefined ? info.avatar : 0;
   const skin = SKIN_TONES[ai % SKIN_TONES.length];
@@ -500,10 +689,11 @@ function buildWorld() {
   scene.add(floor);
 
   // warehouse pallet racks for interior walls, metal panels for the outer walls
-  const panelMat = new THREE.MeshLambertMaterial({ color: 0x5a6472 });
+  const panelMat = new THREE.MeshLambertMaterial({ color: 0x3a4358 });
   const postMat = new THREE.MeshLambertMaterial({ color: 0x37404e });
-  const beamMat = new THREE.MeshLambertMaterial({ color: 0xd0681c });
-  const goodsCols = [0x8a6f4d, 0x6b7f5e, 0x7d6a8a, 0x5e6e80, 0x96793f];
+  const beamMat = new THREE.MeshLambertMaterial({ color: 0x2fbfa8 });
+  const neonMat = new THREE.MeshBasicMaterial({ color: 0x35f0d0 });
+  const goodsCols = [0x5e6e80, 0x4a5a6e, 0x6b7f8e, 0x3e4e60, 0x7d8a5e];
   map.walls.forEach((w, wi) => {
     const isBorder = w.x <= 0 || w.y <= 0 || w.x + w.w >= map.w || w.y + w.h >= map.h;
     if (isBorder) {
@@ -511,6 +701,9 @@ function buildWorld() {
       m.position.set(w.x + w.w / 2, 60, w.y + w.h / 2);
       scene.add(m);
       wallMeshes.push(m);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(w.w, 2, Math.min(w.h, 6)), neonMat);
+      strip.position.set(w.x + w.w / 2, 118, w.y + w.h / 2);
+      scene.add(strip);
       return;
     }
     const horizontal = w.w >= w.h;
@@ -537,6 +730,10 @@ function buildWorld() {
       scene.add(beam);
       wallMeshes.push(beam);
     }
+    // neon strip along the top of the rack
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(horizontal ? len : 6, 2, horizontal ? 6 : len), neonMat);
+    strip.position.set(w.x + w.w / 2, H + 3, w.y + w.h / 2);
+    scene.add(strip);
     // goods on shelves
     let s = wi * 31 + 5;
     const rr = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
@@ -556,11 +753,32 @@ function buildWorld() {
   });
 
   // hiding spots: lockers, barrels, cabinets, pallet stacks (no cardboard crates)
+  // hiding spots: sci-fi props when assets are loaded, procedural fallback otherwise
+  function makeGlbSpot(kind) {
+    if (!assets.ready) return null;
+    const E = assets.env;
+    if (kind === 0 && E.Props_ContainerFull) return normalizedClone(E.Props_ContainerFull, 62);
+    if (kind === 1 && E.Props_Vessel) {
+      const g = new THREE.Group();
+      const v1 = normalizedClone(E.Props_Vessel, 34); v1.position.set(-11, 0, 3); g.add(v1);
+      const v2 = normalizedClone(E.Props_Vessel, 27); v2.position.set(12, 0, -4); g.add(v2);
+      return g;
+    }
+    if (kind === 2 && E.Props_Computer) return normalizedClone(E.Props_Computer, 38);
+    if (kind === 3 && E.Props_Crate) {
+      const g = new THREE.Group();
+      g.add(normalizedClone(E.Props_Crate, 26));
+      if (E.Props_CrateLong) { const c2 = normalizedClone(E.Props_CrateLong, 14); c2.position.y = 26; g.add(c2); }
+      return g;
+    }
+    return null;
+  }
   map.spots.forEach((s, i) => {
     const id = s.id !== undefined ? s.id : i;
     const grp = new THREE.Group();
     const kind = i % 4;
-    if (kind === 0) {
+    const glbInner = makeGlbSpot(kind);
+    if (glbInner) { grp.add(glbInner); } else if (kind === 0) {
       // locker
       const body = new THREE.Mesh(new THREE.BoxGeometry(30, 62, 30), new THREE.MeshLambertMaterial({ color: 0x4f6d8c }));
       body.position.y = 31; grp.add(body);
@@ -599,30 +817,69 @@ function buildWorld() {
     grp.rotation.y = (i % 4) * 0.4;
     grp.userData.spotId = id;
     grp.userData.baseY = 0;
-    grp.userData.mats = grp.children.map(ch => ch.material);
+    const spotMats = [];
+    grp.traverse(ch => { if (ch.isMesh) { ch.material = ch.material.clone(); spotMats.push(ch.material); } });
+    grp.userData.mats = spotMats;
     scene.add(grp);
     spotMeshes.push(grp);
   });
 
-  // vault: a big floor safe
+  // vault: sci-fi teleporter pad + treasure chest (procedural safe as fallback)
   const v = map.vault;
-  vaultMesh = new THREE.Mesh(new THREE.BoxGeometry(64, 66, 64), new THREE.MeshLambertMaterial({ color: 0x37424e }));
-  vaultMesh.position.set(v.x + v.w / 2, 33, v.y + v.h / 2);
-  scene.add(vaultMesh);
-  const safeDoor = new THREE.Mesh(new THREE.BoxGeometry(48, 52, 4), new THREE.MeshLambertMaterial({ color: 0x4a5866 }));
-  safeDoor.position.set(v.x + v.w / 2, 30, v.y + v.h / 2 - 33);
-  scene.add(safeDoor);
-  const dial = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 3, 12), new THREE.MeshLambertMaterial({ color: 0xd8d8d8 }));
-  dial.rotation.x = Math.PI / 2;
-  dial.position.set(v.x + v.w / 2, 34, v.y + v.h / 2 - 36);
-  scene.add(dial);
+  if (assets.ready && assets.env.Props_Teleporter_1) {
+    vaultMesh = normalizedClone(assets.env.Props_Teleporter_1, 66);
+    vaultMesh.position.set(v.x + v.w / 2, 0, v.y + v.h / 2);
+    scene.add(vaultMesh);
+    if (assets.env.Props_Chest) {
+      const chest = normalizedClone(assets.env.Props_Chest, 22);
+      chest.position.set(v.x + v.w / 2, 0, v.y + v.h / 2 - 48);
+      scene.add(chest);
+    }
+  } else {
+    vaultMesh = new THREE.Mesh(new THREE.BoxGeometry(64, 66, 64), new THREE.MeshLambertMaterial({ color: 0x37424e }));
+    vaultMesh.position.set(v.x + v.w / 2, 33, v.y + v.h / 2);
+    scene.add(vaultMesh);
+    const safeDoor = new THREE.Mesh(new THREE.BoxGeometry(48, 52, 4), new THREE.MeshLambertMaterial({ color: 0x4a5866 }));
+    safeDoor.position.set(v.x + v.w / 2, 30, v.y + v.h / 2 - 33);
+    scene.add(safeDoor);
+    const dial = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 3, 12), new THREE.MeshLambertMaterial({ color: 0xd8d8d8 }));
+    dial.rotation.x = Math.PI / 2;
+    dial.position.set(v.x + v.w / 2, 34, v.y + v.h / 2 - 36);
+    scene.add(dial);
+  }
+  // hangar dressing: corner columns, a big door on the north wall, pods near the vault
+  if (assets.ready) {
+    if (assets.env.Column_1) {
+      [[70, 70], [map.w - 70, 70], [70, map.h - 70], [map.w - 70, map.h - 70]].forEach(([cx, cz]) => {
+        const col = normalizedClone(assets.env.Column_1, 110);
+        col.position.set(cx, 0, cz);
+        scene.add(col);
+      });
+    }
+    if (assets.env.Door_Double) {
+      const door = normalizedClone(assets.env.Door_Double, 58);
+      door.position.set(map.w / 2, 0, 16);
+      scene.add(door);
+    }
+    if (assets.env.Props_Capsule) {
+      const cap = normalizedClone(assets.env.Props_Capsule, 44);
+      cap.position.set(v.x + v.w / 2 + 85, 0, v.y + v.h / 2 + 60);
+      scene.add(cap);
+    }
+    if (assets.env.Props_Pod) {
+      const pod = normalizedClone(assets.env.Props_Pod, 42);
+      pod.position.set(v.x + v.w / 2 - 85, 0, v.y + v.h / 2 + 60);
+      scene.add(pod);
+    }
+  }
   vaultGlow = new THREE.Mesh(new THREE.TorusGeometry(90, 6, 8, 28), new THREE.MeshBasicMaterial({ color: 0x7ef0c1, transparent: true, opacity: 0.5 }));
   vaultGlow.rotation.x = Math.PI / 2;
   vaultGlow.position.set(v.x + v.w / 2, 4, v.y + v.h / 2);
   scene.add(vaultGlow);
 }
 
-let camPos = null, camYaw = null;
+let camPos = null, camYaw = null, camPitch = 0.32;
+let camId = null, camLX = 0, camLY = 0, camMouse = false, camHintShown = false;
 function tick() {
   requestAnimationFrame(tick);
   if (!renderer || (phase !== 'game' && phase !== 'end')) return;
@@ -642,7 +899,10 @@ function tick() {
     if (m._lx !== undefined) {
       const dx = p.x - m._lx, dy = p.y - m._ly;
       const dist = Math.hypot(dx, dy);
-      if (dist > 0.5) {
+      if (m.userData.bones) {
+        if (dist > 0.5) m.rotation.y = Math.atan2(dx, dy);
+        animateRig(m.userData, dist > 0.5, dist, now);
+      } else if (dist > 0.5) {
         m.rotation.y = Math.atan2(dx, dy);
         m.userData.walkPhase += dist * 0.09;
         const swing = Math.sin(m.userData.walkPhase) * Math.min(1, dist * 0.5) * 0.6;
@@ -735,21 +995,18 @@ function tick() {
     vaultGlow.scale.setScalar(1 + 0.06 * Math.sin(now / 400));
   }
 
-  // camera: third-person follow, smoothly swinging behind facing direction
+  // camera: free orbit (right-thumb drag), pitch-adjustable, no auto-turn
   const mine = state.players.find(p => p.id === myId);
   if (mine && mine.x > -100) {
     const pm = playerMeshes.get(myId);
-    const facing = pm ? pm.rotation.y : Math.PI;
-    if (camYaw === null) camYaw = Math.PI;
-    let diff = facing - camYaw;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    camYaw += diff * 0.06;
+    if (camYaw === null) camYaw = pm ? pm.rotation.y : Math.PI;
     const fx = Math.sin(camYaw), fz = Math.cos(camYaw);
-    if (!camPos) camPos = { x: mine.x - fx * 330, z: mine.y - fz * 330 };
-    camPos.x += (mine.x - fx * 330 - camPos.x) * 0.1;
-    camPos.z += (mine.y - fz * 330 - camPos.z) * 0.1;
-    camera.position.set(camPos.x, 210, camPos.z);
+    const hd = 330 - camPitch * 120;
+    const ch = 110 + camPitch * 230;
+    if (!camPos) camPos = { x: mine.x - fx * hd, z: mine.y - fz * hd };
+    camPos.x += (mine.x - fx * hd - camPos.x) * 0.14;
+    camPos.z += (mine.y - fz * hd - camPos.z) * 0.14;
+    camera.position.set(camPos.x, ch, camPos.z);
     camera.lookAt(mine.x + fx * 60, 30, mine.y + fz * 60);
   }
   renderer.render(scene, camera);
@@ -913,6 +1170,7 @@ $('btnShare').addEventListener('click', async () => {
 });
 
 if (qs.get('room')) $('codeIn').value = qs.get('room').toUpperCase().slice(0, 4);
+loadAssets();
 if (!window.THREE) fallback2d();
 </script>
 </body>

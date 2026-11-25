@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>body{margin:0;background:#101a33}</style></head><body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="/vendor/GLTFLoader.js"></script>
+<script src="/vendor/SkeletonUtils.js"></script>
+<script>
+const CHARS = ['M_Casual','M_Casual2','M_Punk','M_Suit','M_Swat','M_Worker','F_Casual','F_Soldier','F_Worker','F_SciFi','F_Suit','F_Punk'];
+const ENV = ['Props_Crate','Props_CrateLong','Props_ContainerFull','Props_Computer','Props_Shelf','Props_Vessel','Props_Capsule','Props_Chest','Props_Pod','Props_Teleporter_1','Column_1','Door_Double'];
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x101a33);
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 1, 5000);
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+const dir = new THREE.DirectionalLight(0xfff2d9, 1.0); dir.position.set(400,800,300); scene.add(dir);
+
+function lambertize(root){
+  root.traverse(o=>{
+    if(o.isMesh && o.material){
+      const m=o.material;
+      if(m.isMeshStandardMaterial){
+        o.material=new THREE.MeshLambertMaterial({color:m.color?m.color.clone():0xffffff,map:m.map||null,transparent:!!m.transparent,opacity:m.opacity,skinning:!!o.isSkinnedMesh});
+      }
+    }
+  });
+}
+function normalizedClone(src,targetH){
+  const obj=THREE.SkeletonUtils.clone(src);
+  const box=new THREE.Box3().setFromObject(obj);
+  const h=(box.max.y-box.min.y)||1;
+  const s=targetH/h;
+  obj.scale.setScalar(s);
+  obj.position.set(-(box.min.x+box.max.x)/2*s,-box.min.y*s,-(box.min.z+box.max.z)/2*s);
+  const grp=new THREE.Group(); grp.add(obj);
+  lambertize(grp);
+  return grp;
+}
+const BONE_NAMES={hips:'Hips',torso:'Torso',chest:'Chest',neck:'Neck',head:'Head',uLL:'UpperLegL',uLR:'UpperLegR',lLL:'LowerLegL',lLR:'LowerLegR',uAL:'UpperArmL',uAR:'UpperArmR',lAL:'LowerArmL',lAR:'LowerArmR'};
+
+const loader = new THREE.GLTFLoader();
+const chars={}, env={};
+let pending = CHARS.length+ENV.length;
+function checkDone(){ if(--pending<=0) build(); }
+CHARS.forEach(n=>loader.load('/models/characters/'+n+'.glb',g=>{chars[n]=g.scene;checkDone();},undefined,checkDone));
+ENV.forEach(n=>loader.load('/models/env/'+n+'.glb',g=>{env[n]=g.scene;checkDone();},undefined,checkDone));
+
+const rigs=[];
+function build(){
+  // row of 12 characters, first 4 posed mid-walk
+  CHARS.forEach((n,i)=>{
+    const c=normalizedClone(chars[n],46);
+    c.position.set(i*70-385, 0, 0);
+    scene.add(c);
+    const bones={},rest={};
+    for(const k in BONE_NAMES){const b=c.getObjectByName(BONE_NAMES[k]); if(b) bones[k]=b;}
+
+    for(const k in bones) rest[k]=bones[k].quaternion.clone();
+    rigs.push({bones,rest,walk:i<4,phase:i*0.9});
+  });
+  // env lineup behind
+  let x=-385;
+  ['Props_ContainerFull','Props_Vessel','Props_Computer','Props_Crate','Props_Teleporter_1','Props_Chest','Props_Capsule','Props_Pod','Column_1','Door_Double','Props_Shelf'].forEach(n=>{
+    if(!env[n])return;
+    const c=normalizedClone(env[n], n==='Column_1'?110:(n==='Props_Teleporter_1'?66:(n==='Props_Chest'?22:50)));
+    c.position.set(x,0,140); scene.add(c);
+    x+=90;
+  });
+  window.__ready=true;
+}
+window.__pose=(t)=>{
+  rigs.forEach(r=>{
+    if(!r.walk)return;
+    const s=Math.sin(t+r.phase), c=Math.cos(t+r.phase);
+    const set=(k,axis,ang)=>{const b=r.bones[k]; if(!b)return; b.quaternion.copy(r.rest[k]); if(axis==='x')b.rotateX(ang); else b.rotateZ(ang);};
+    set('uLL','z',-s*0.55); set('uLR','z',s*0.55);
+    set('lLL','z',-Math.max(0,c)*0.75); set('lLR','z',-Math.max(0,-c)*0.75);
+    set('uAL','z',s*0.4); set('uAR','z',-s*0.4);
+  });
+};
+window.__view=(x,y,z,tx,ty,tz)=>{camera.position.set(x,y,z);camera.lookAt(tx,ty,tz);};
+window.__render=()=>renderer.render(scene,camera);
+</script></body></html>
