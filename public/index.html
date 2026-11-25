@@ -302,8 +302,8 @@ function initGL() {
   renderer.setSize(innerWidth, innerHeight);
   $('gl').appendChild(renderer.domElement);
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x141d33);
-  scene.fog = new THREE.Fog(0x141d33, 1500, 3600);
+  scene.background = new THREE.Color(0x1c2947);
+  scene.fog = new THREE.Fog(0x1c2947, 1100, 3200);
   camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 10, 6000);
   scene.add(new THREE.AmbientLight(0xffffff, 0.75));
   const dir = new THREE.DirectionalLight(0xfff2d9, 0.85);
@@ -412,10 +412,28 @@ function buildWorld() {
   if (worldBuilt) return;
   worldBuilt = true;
 
-  const skirt = new THREE.Mesh(new THREE.PlaneGeometry(8000, 8000), new THREE.MeshBasicMaterial({ color: 0x10182c }));
+  const skirt = new THREE.Mesh(new THREE.PlaneGeometry(8000, 8000), new THREE.MeshBasicMaterial({ color: 0x18223c }));
   skirt.rotation.x = -Math.PI / 2;
   skirt.position.set(map.w / 2, -2, map.h / 2);
   scene.add(skirt);
+
+  // distant night-city silhouettes to fill the horizon
+  const silMat = new THREE.MeshBasicMaterial({ color: 0x232f52 });
+  const silMat2 = new THREE.MeshBasicMaterial({ color: 0x1f2a4c });
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (let i = 0; i < 26; i++) {
+    const side = i % 4;
+    const bw = 160 + rnd() * 260, bh = 70 + rnd() * 190, bd = 160 + rnd() * 260;
+    let sx, sz;
+    if (side === 0) { sx = rnd() * map.w; sz = -550 - rnd() * 900; }
+    else if (side === 1) { sx = rnd() * map.w; sz = map.h + 550 + rnd() * 900; }
+    else if (side === 2) { sx = -550 - rnd() * 900; sz = rnd() * map.h; }
+    else { sx = map.w + 550 + rnd() * 900; sz = rnd() * map.h; }
+    const b = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), i % 2 ? silMat : silMat2);
+    b.position.set(sx, bh / 2 - 2, sz);
+    scene.add(b);
+  }
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(map.w, map.h), new THREE.MeshLambertMaterial({ map: floorTexture() }));
   floor.rotation.x = -Math.PI / 2;
@@ -558,8 +576,8 @@ function tick() {
     if (!camPos) camPos = { x: tx, z: tz };
     camPos.x += (tx - camPos.x) * 0.12;
     camPos.z += (tz - camPos.z) * 0.12;
-    camera.position.set(camPos.x, 300, camPos.z + 430);
-    camera.lookAt(camPos.x, 20, camPos.z - 120);
+    camera.position.set(camPos.x, 210, camPos.z + 330);
+    camera.lookAt(camPos.x, 30, camPos.z - 170);
   }
   renderer.render(scene, camera);
 }
