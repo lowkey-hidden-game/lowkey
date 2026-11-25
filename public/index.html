@@ -45,6 +45,14 @@
   .actbtn { position: fixed; z-index: 6; width: 66px; height: 66px; border-radius: 50%; font-size: 13px;
     padding: 0; box-shadow: 0 4px 14px rgba(0,0,0,.45); line-height: 1.2; }
   .actbtn small { font-size: 12px; }
+  .actbtn { transition: transform .08s; }
+  .actbtn:active { transform: scale(.84); }
+  #vaultArrow { position: fixed; z-index: 7; font-size: 30px; color: #ffd34d; pointer-events: none;
+    text-shadow: 0 0 12px #ffd34d, 0 0 4px #000; }
+  #btnMute { position: fixed; z-index: 7; top: 64px; right: 12px; width: 40px; height: 40px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.2); background: rgba(10,16,38,.7); color: #fff; font-size: 17px; }
+  @keyframes pop { 0% { transform: scale(.6); opacity: 0; } 70% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
+  #toast:not(.hidden) { animation: pop .18s ease-out; }
   #btnSearch { left: 16px; bottom: 184px; background: #7ef0c1; }
   #btnGhost { left: 94px; bottom: 184px; background: #b48cff; color: #fff; }
   #btnCrouch { left: 16px; bottom: 340px; background: #8fa8c8; color: #12203a; }
@@ -111,6 +119,8 @@
 <div id="effects" class="hidden"></div>
 <div id="secret" class="hidden"><span>🤫 الكنز معاك! وصّله للخزنة من غير ما حد يشك</span></div>
 <div id="toast" class="hidden"><span id="toastTxt"></span></div>
+<div id="vaultArrow" class="hidden">➤</div>
+<button id="btnMute" class="hidden">🔊</button>
 
 <div id="stick" class="hidden"><div id="knob"></div></div>
 <div id="camHint" class="hidden">👆 اسحب أي حتة فاضية عشان تلفّ الكاميرا</div>
@@ -193,6 +203,7 @@ function handle(m, joinCb) {
       $('endOverlay').classList.add('hidden');
       buildWorld();
       showGame();
+      AudioFX.unlock(); AudioFX.ambientStart(); AudioFX.alarmStop();
       break;
     case 'state':
       state = m;
@@ -203,12 +214,16 @@ function handle(m, joinCb) {
       break;
     case 'empty':
       toast('فاضي! مفيش هنا حاجة 🕳️');
+      AudioFX.thud();
       break;
     case 'secret':
       if (m.carrier) {
         carrier = true;
         $('secret').classList.remove('hidden');
         buzz([80, 60, 80]);
+        AudioFX.sting();
+        const me0 = state.players && state.players.find(p => p.id === myId);
+        if (me0) burst(me0.x, 40, me0.y, 'rgb(255,211,77)', 22, 70, 120, 10);
       }
       break;
     case 'power':
@@ -218,6 +233,11 @@ function handle(m, joinCb) {
       if (m.type === 'ghost') toast('👻 اختفيت عن الأنظار لحظات!');
       if (m.type === 'goggles') toast('🥽 نظارة الرؤية: شايف المختفيين ١٢ ثانية!');
       buzz(60);
+      AudioFX.pickup();
+      {
+        const me0 = state.players && state.players.find(p => p.id === myId);
+        if (me0) burst(me0.x, 30, me0.y, 'rgb(126,224,255)', 12, 50, 80, 7);
+      }
       break;
     case 'reveal':
       revealId = m.id;
@@ -234,9 +254,24 @@ function handle(m, joinCb) {
       if (m.kind === 'shielded') toast('🛡️ درع ' + m.on + ' صدّ كشف ' + m.by + '!');
       if (m.kind === 'treasure_moved') toast('👀 حسيت بحركة.. الكنز غيّر مكانه!');
       if (m.kind === 'exposed' || m.kind === 'treasure_moved') alarmBoost = 1;
+      if (m.kind === 'exposed') { AudioFX.buzzer(); shake = Math.max(shake, 0.8); }
+      if (m.kind === 'wrong_expose') { AudioFX.fail(); shake = Math.max(shake, 0.4); }
+      if (m.kind === 'treasure_moved') { AudioFX.tick(); shake = Math.max(shake, 0.25); }
+      if (m.kind === 'shielded') AudioFX.pickup();
       break;
     case 'end':
       endWinnerId = m.winnerId || null;
+      AudioFX.alarmStop();
+      if (m.winnerId) {
+        if (m.winnerId === myId) AudioFX.fanfare(); else AudioFX.success();
+        const w = state.players && state.players.find(p => p.id === m.winnerId);
+        if (w) {
+          burst(w.x, 50, w.y, 'rgb(255,211,77)', 26, 110, 160, 9);
+          burst(w.x, 70, w.y, 'rgb(126,240,193)', 20, 100, 150, 8);
+          burst(w.x, 60, w.y, 'rgb(255,138,212)', 20, 100, 150, 8);
+        }
+        shake = Math.max(shake, 0.5);
+      } else AudioFX.fail();
       resetCrouch();
       showEnd(m);
       break;
@@ -260,7 +295,8 @@ function show(id) {
   $('stick').classList.toggle('hidden', !inGame);
   if (inGame && !camHintShown) $('camHint').classList.remove('hidden');
   if (!inGame) $('camHint').classList.add('hidden');
-  if (!inGame) ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost', 'btnCrouch'].forEach(b => $(b).classList.add('hidden'));
+  if (!inGame) ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost', 'btnCrouch', 'btnMute'].forEach(b => $(b).classList.add('hidden'));
+  else $('btnMute').classList.remove('hidden');
 }
 function showLobby() { show('lobby'); $('endOverlay').classList.add('hidden'); }
 function showGame() { show(null); onResize(); }
@@ -292,7 +328,7 @@ function showEnd(m) {
   phase = 'end';
   carrier = false;
   $('secret').classList.add('hidden');
-  ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost', 'btnCrouch'].forEach(b => $(b).classList.add('hidden'));
+  ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost', 'btnCrouch', 'btnMute'].forEach(b => $(b).classList.add('hidden'));
   const title = $('endTitle'), detail = $('endDetail');
   if (m.reason === 'deposit') {
     title.textContent = '🏆 ' + m.winnerName + ' كسب!';
@@ -312,11 +348,87 @@ function showEnd(m) {
   $('endOverlay').classList.remove('hidden');
 }
 
+// ---------- audio (procedural WebAudio - no assets, CC0-equivalent) ----------
+const AudioFX = (() => {
+  let ctx = null, master = null, ambientG = null, alarmInt = null, muted = false;
+  function ensure() {
+    if (ctx) return true;
+    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return false; }
+    master = ctx.createGain(); master.gain.value = 0.5; master.connect(ctx.destination);
+    return true;
+  }
+  function unlock() { if (ensure() && ctx.state === 'suspended') ctx.resume(); }
+  function tone(f, dur, type, vol, slide, when) {
+    if (!ctx || muted) return;
+    const t0 = ctx.currentTime + (when || 0);
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(f, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, slide), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(master);
+    o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+  function noise(dur, vol, freq, q, when) {
+    if (!ctx || muted) return;
+    const t0 = ctx.currentTime + (when || 0);
+    const len = Math.ceil(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const s = ctx.createBufferSource(); s.buffer = buf;
+    const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q || 1;
+    const g = ctx.createGain(); g.gain.value = vol;
+    s.connect(f); f.connect(g); g.connect(master);
+    s.start(t0);
+  }
+  let stepFlip = false;
+  return {
+    unlock,
+    toggleMute() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.5; return muted; },
+    click() { tone(880, 0.06, 'triangle', 0.12); },
+    step(fast) {
+      stepFlip = !stepFlip;
+      noise(0.09, 0.10, stepFlip ? 500 : 420, 1.2);
+      if (fast) noise(0.06, 0.06, 900, 1.5);
+    },
+    sting() { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'triangle', 0.16, 0, i * 0.07)); },
+    success() { [392, 523, 659, 784].forEach((f, i) => tone(f, 0.35, 'sine', 0.18, 0, i * 0.09)); tone(1568, 0.5, 'sine', 0.1, 0, 0.4); },
+    fanfare() { [523, 523, 523, 659, 784, 1047].forEach((f, i) => tone(f, 0.18, 'square', 0.09, 0, i * 0.11)); },
+    fail() { tone(220, 0.5, 'sawtooth', 0.12, 110); },
+    buzzer() { tone(140, 0.35, 'square', 0.2, 90); noise(0.2, 0.15, 300, 2); },
+    thud() { tone(90, 0.18, 'sine', 0.2, 50); noise(0.12, 0.1, 200, 1); },
+    tick() { tone(1200, 0.03, 'square', 0.06); },
+    pickup() { tone(660, 0.08, 'square', 0.1); tone(990, 0.12, 'square', 0.1, 0, 0.07); },
+    hit() { noise(0.15, 0.3, 250, 1); tone(180, 0.25, 'sawtooth', 0.2, 60); },
+    ambientStart() {
+      if (!ctx || ambientG) return;
+      ambientG = ctx.createGain(); ambientG.gain.value = 0.045; ambientG.connect(master);
+      const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 220; f.connect(ambientG);
+      for (const fr of [54, 81.5, 108]) {
+        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = fr;
+        o.connect(f); o.start();
+      }
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.13;
+      const lg = ctx.createGain(); lg.gain.value = 0.02;
+      lfo.connect(lg); lg.connect(ambientG.gain); lfo.start();
+    },
+    alarmStart() {
+      if (!ctx || alarmInt) return;
+      let hi = false;
+      alarmInt = setInterval(() => { hi = !hi; tone(hi ? 640 : 480, 0.3, 'square', 0.045); }, 340);
+    },
+    alarmStop() { if (alarmInt) { clearInterval(alarmInt); alarmInt = null; } },
+  };
+})();
+
 // ---------- 3D world ----------
 let renderer = null, scene = null, camera = null;
 let worldBuilt = false;
 let wallMeshes = [], dynWallMeshes = [], spotMeshes = [], powerMeshes = new Map(), playerMeshes = new Map();
-let vaultMesh = null, vaultGlow = null;
+let vaultMesh = null, vaultGlow = null, vaultPillar = null;
 let glFailed = false;
 
 const POW_COLORS = { speed: 0xffd34d, shield: 0x6bb8ff, reveal: 0xff8ad4, ghost: 0xb48cff, goggles: 0x7ee0ff };
@@ -1061,6 +1173,24 @@ function buildWorld() {
 
   // vault: sci-fi teleporter pad + treasure chest (procedural safe as fallback)
   const v = map.vault;
+  // light pillar over the vault: visible across the whole map
+  {
+    const c = document.createElement('canvas');
+    c.width = 4; c.height = 128;
+    const g2 = c.getContext('2d');
+    const gr = g2.createLinearGradient(0, 0, 0, 128);
+    gr.addColorStop(0, 'rgba(255,200,61,0)');
+    gr.addColorStop(0.7, 'rgba(255,200,61,.5)');
+    gr.addColorStop(1, 'rgba(255,214,90,.9)');
+    g2.fillStyle = gr; g2.fillRect(0, 0, 4, 128);
+    const tex = new THREE.CanvasTexture(c);
+    vaultPillar = new THREE.Mesh(
+      new THREE.CylinderGeometry(16, 22, 700, 16, 1, true),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.6, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    vaultPillar.material.color.setRGB(1.7, 1.12, 0.26); // warm overdrive: reads gold over the blue sky
+    vaultPillar.position.set(map.vault.x + map.vault.w / 2, 350, map.vault.y + map.vault.h / 2);
+    scene.add(vaultPillar);
+  }
   if (assets.ready && assets.env.Props_Teleporter_1) {
     vaultMesh = normalizedClone(assets.env.Props_Teleporter_1, 66);
     vaultMesh.position.set(v.x + v.w / 2, 0, v.y + v.h / 2);
@@ -1113,7 +1243,35 @@ function buildWorld() {
   scene.add(vaultGlow);
 }
 
-let endWinnerId = null, dirLight = null, HIQ = false, alarmBoost = 0;
+let endWinnerId = null, dirLight = null, HIQ = false, alarmBoost = 0, shake = 0;
+const particles = [];
+function burst(x, y, z, css, n, spread, up, scale) {
+  if (!scene) return;
+  for (let i = 0; i < (n || 14); i++) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture(css), transparent: true, opacity: 0.95,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    const s = (scale || 8) * (0.6 + Math.random() * 0.8);
+    sp.scale.set(s, s, 1);
+    sp.position.set(x, y, z);
+    scene.add(sp);
+    const a = Math.random() * Math.PI * 2, r = (spread || 60) * (0.3 + Math.random() * 0.7);
+    particles.push({ sp, vx: Math.cos(a) * r, vy: (up || 90) * (0.5 + Math.random()), vz: Math.sin(a) * r, life: 1 });
+  }
+}
+function stepParticles(dtSec) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.sp.position.x += p.vx * dtSec;
+    p.sp.position.y += p.vy * dtSec;
+    p.sp.position.z += p.vz * dtSec;
+    p.vy -= 220 * dtSec;
+    p.life -= dtSec * 1.1;
+    p.sp.material.opacity = Math.max(0, p.life) * 0.95;
+    if (p.life <= 0 || p.sp.position.y < 0) { scene.remove(p.sp); p.sp.material.dispose(); particles.splice(i, 1); }
+  }
+}
 const alarmLights = [];
 let camPos = null, camYaw = null, camPitch = 0.32;
 let camId = null, camLX = 0, camLY = 0, camMouse = false, camHintShown = false;
@@ -1132,14 +1290,24 @@ function tick() {
     if (!m) { m = makePlayerMesh(p); playerMeshes.set(p.id, m); scene.add(m); }
     if (p.x < -100) { m.visible = false; continue; }
     m.visible = true;
-    m.position.x = p.x;
-    m.position.z = p.y;
+    if (m._lx === undefined) { m.position.x = p.x; m.position.z = p.y; }
+    else {
+      const k = Math.min(1, dtSec * 13); // weighty glide toward server truth
+      m.position.x += (p.x - m.position.x) * k;
+      m.position.z += (p.y - m.position.z) * k;
+    }
     // face movement direction + walk animation
     if (m._lx !== undefined) {
       const dx = p.x - m._lx, dy = p.y - m._ly;
       const dist = Math.hypot(dx, dy);
       if (m.userData.mixer) {
-        if (dist > 0.5) m.rotation.y = Math.atan2(dx, dy);
+        if (dist > 0.5) {
+          const want = Math.atan2(dx, dy);
+          let d = want - m.rotation.y;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          m.rotation.y += d * Math.min(1, dtSec * 12);
+        }
         const u = m.userData;
         const moving = dist > 0.5;
         let want = 'Idle_Loop';
@@ -1229,7 +1397,7 @@ function tick() {
 
   // alarm beacons: slow pulse, boosted near the end and on events
   if (alarmLights.length) {
-    if (state.left !== undefined && state.left <= 30 && phase === 'game') alarmBoost = Math.max(alarmBoost, 0.6);
+    if (state.left !== undefined && state.left <= 30 && phase === 'game') { alarmBoost = Math.max(alarmBoost, 0.6); AudioFX.alarmStart(); }
     alarmBoost = Math.max(0, alarmBoost - dtSec * 0.3);
     const pulse = (Math.sin(now / 320) + 1) / 2;
     const base = 0.22 + alarmBoost * 1.1;
@@ -1273,11 +1441,41 @@ function tick() {
     if (!pseen.has(id)) { scene.remove(m); powerMeshes.delete(id); }
   }
 
+  stepParticles(dtSec);
+  shake = Math.max(0, shake - dtSec * 2.4);
+
+  // footsteps synced to my movement + deposit/search ticks
+  {
+    const meP = state.players.find(p => p.id === myId);
+    if (meP && meP.x > -100 && phase === 'game') {
+      const pm = playerMeshes.get(myId);
+      const moving = pm && pm._lx !== undefined && Math.hypot(meP.x - pm._lx, meP.y - pm._ly) > 0.5;
+      tick._stepT = (tick._stepT || 0) - dtSec;
+      if (moving && tick._stepT <= 0) {
+        AudioFX.step(!!(state.me && state.me.speed));
+        tick._stepT = (state.me && state.me.speed) ? 0.26 : 0.38;
+      }
+      tick._depT = (tick._depT || 0) - dtSec;
+      if (state.me && state.me.deposit > 0 && tick._depT <= 0) { AudioFX.tick(); tick._depT = 0.25; }
+      else if (state.me && state.me.search > 0 && tick._depT <= 0) { AudioFX.tick(); tick._depT = 0.3; }
+    }
+  }
+
+  // sprint FOV kick
+  {
+    const wantFov = (state.me && state.me.speed && phase === 'game') ? 68 : 60;
+    if (Math.abs(camera.fov - wantFov) > 0.05) {
+      camera.fov += (wantFov - camera.fov) * Math.min(1, dtSec * 5);
+      camera.updateProjectionMatrix();
+    }
+  }
+
   // vault pulse
   if (vaultGlow) {
     vaultGlow.material.opacity = 0.35 + 0.25 * Math.sin(now / 400);
     vaultGlow.scale.setScalar(1 + 0.06 * Math.sin(now / 400));
   }
+  if (vaultPillar) vaultPillar.material.opacity = 0.35 + 0.18 * Math.sin(now / 600);
 
   // camera: free orbit (right-thumb drag), pitch-adjustable, no auto-turn
   const mine = state.players.find(p => p.id === myId);
@@ -1291,7 +1489,35 @@ function tick() {
     camPos.x += (mine.x - fx * hd - camPos.x) * 0.14;
     camPos.z += (mine.y - fz * hd - camPos.z) * 0.14;
     camera.position.set(camPos.x, ch, camPos.z);
-    camera.lookAt(mine.x + fx * 60, 30, mine.y + fz * 60);
+    // lookahead toward motion so you see where you're going
+    const pm0 = playerMeshes.get(myId);
+    const lvx = pm0 && pm0._lx !== undefined ? mine.x - pm0._lx : 0;
+    const lvz = pm0 && pm0._ly !== undefined ? mine.y - pm0._ly : 0;
+    camera.lookAt(mine.x + fx * 60 + lvx * 2.2, 30, mine.y + fz * 60 + lvz * 2.2);
+    if (shake > 0.01) {
+      camera.position.x += (Math.random() - 0.5) * shake * 16;
+      camera.position.y += (Math.random() - 0.5) * shake * 10;
+      camera.position.z += (Math.random() - 0.5) * shake * 16;
+    }
+  }
+  // vault direction arrow when the vault is off-screen
+  {
+    const ar = $('vaultArrow');
+    if (phase === 'game' && vaultPillar) {
+      const v = new THREE.Vector3(map.vault.x + map.vault.w / 2, 40, map.vault.y + map.vault.h / 2).project(camera);
+      const behind = v.z > 1;
+      const off = behind || Math.abs(v.x) > 0.88 || Math.abs(v.y) > 0.88;
+      if (off) {
+        let dx = v.x, dy = -v.y;
+        if (behind) { dx = -dx; dy = -dy; }
+        const ang = Math.atan2(dy, dx);
+        const ex = Math.cos(ang) * 0.8, ey = Math.sin(ang) * 0.8;
+        ar.classList.remove('hidden');
+        ar.style.left = ((ex * 0.5 + 0.5) * innerWidth - 15) + 'px';
+        ar.style.top = ((-ey * 0.5 + 0.5) * innerHeight - 15) + 'px';
+        ar.style.transform = 'rotate(' + ang + 'rad)';
+      } else ar.classList.add('hidden');
+    } else ar.classList.add('hidden');
   }
   renderer.render(scene, camera);
 }
@@ -1428,6 +1654,9 @@ $('btnExpose').addEventListener('click', () => ws && ws.readyState === 1 && ws.s
 $('btnBuild').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'build' })));
 $('btnGhost').addEventListener('click', () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: 'ghost' })));
 let crouchOn = false;
+$('btnMute').addEventListener('click', () => {
+  $('btnMute').textContent = AudioFX.toggleMute() ? '🔇' : '🔊';
+});
 $('btnCrouch').addEventListener('click', () => {
   crouchOn = !crouchOn;
   $('btnCrouch').classList.toggle('on', crouchOn);
@@ -1442,6 +1671,8 @@ function resetCrouch() {
 }
 
 // ---------- lobby wiring ----------
+document.addEventListener('pointerdown', () => AudioFX.unlock(), { once: true });
+$('btnJoin').addEventListener('click', () => AudioFX.click());
 $('btnJoin').addEventListener('click', () => {
   const name = $('nameIn').value.trim();
   if (!name) { $('joinErr').textContent = 'اكتب اسمك الأول'; return; }
