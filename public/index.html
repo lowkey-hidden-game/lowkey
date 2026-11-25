@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0d1120">
 <link rel="icon" href="data:,">
-<title>Lowkey</title>
+<title>Lowkey 3D</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; overflow: hidden; background: #0d1120; color: #eef2ff;
     font-family: Tahoma, Arial, sans-serif; touch-action: none; overscroll-behavior: none; }
   .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; gap: 14px; padding: 24px; text-align: center;
+    justify-content: center; gap: 14px; padding: 24px; text-align: center; z-index: 20;
     background: radial-gradient(1200px 800px at 70% 20%, #1a2340 0%, #0d1120 60%); }
   h1 { font-size: 44px; color: #ffd34d; text-shadow: 0 0 24px rgba(255,211,77,.35); letter-spacing: 1px; }
   h2 { font-size: 22px; color: #ffd34d; }
@@ -28,7 +28,8 @@
   #plist { display: flex; flex-direction: column; gap: 6px; min-width: 240px; }
   .prow { background: #1b2438; border-radius: 8px; padding: 8px 14px; font-size: 16px; display: flex; justify-content: space-between; }
   .hidden { display: none !important; }
-  canvas { display: block; position: fixed; inset: 0; }
+  #gl { position: fixed; inset: 0; }
+  #gl canvas { display: block; }
   #hud { position: fixed; top: 0; left: 0; right: 0; display: flex; justify-content: space-between;
     padding: 10px 14px; pointer-events: none; font-size: 16px; z-index: 5; }
   .pill { background: rgba(13,17,32,.8); border: 1px solid rgba(255,255,255,.08); border-radius: 20px; padding: 6px 14px; }
@@ -60,6 +61,7 @@
   #avRow button { width: 44px; height: 44px; font-size: 22px; border-radius: 12px; border: 2px solid transparent; background: rgba(255,255,255,.06); cursor: pointer; padding: 0; }
   #avRow button.sel { border-color: #7ee0ff; background: rgba(126,224,255,.18); }
   #avRow button.taken { opacity: .3; }
+  .classicLink { font-size: 13px; color: #5f7099; text-decoration: underline; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -71,6 +73,7 @@
   <input id="codeIn" maxlength="4" placeholder="كود الأوضة (لو معاك)" autocomplete="off" style="text-transform:uppercase">
   <button id="btnJoin">ادخل / اعمل أوضة</button>
   <div id="joinErr" style="color:#ff6b6b;font-size:14px"></div>
+  <a class="classicLink" href="/classic">النسخة الكلاسيك 2D</a>
 </div>
 
 <div id="lobby" class="screen hidden">
@@ -89,7 +92,7 @@
   <p class="sub" id="lobbyHint"></p>
 </div>
 
-<canvas id="cv" class="hidden"></canvas>
+<div id="gl" class="hidden"></div>
 
 <div id="hud" class="hidden">
   <div class="pill" id="timer">3:00</div>
@@ -111,6 +114,7 @@
   <button id="btnAgain">ارجعوا للأوضة 🔁</button>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -118,12 +122,14 @@ const qs = new URLSearchParams(location.search);
 
 let ws, myId = null, roomCode = null, map = null, roster = {};
 const AVATARS = ['🦊', '🐼', '🐸', '🦁', '🐰', '🐯', '🐵', '🦉', '🐙', '🐺', '🦄', '🐝'];
+const AV_COLORS = [0xff9d5c, 0xf2f2f2, 0x7ee081, 0xffc46b, 0xffb3d9, 0xffa94d, 0xc9a06b, 0xb9a8ff, 0x7ed3e8, 0x9aa7bd, 0xe8b3ff, 0xffe066];
 let state = { players: [], spots: [], walls: [], powers: [], left: 0, me: {} };
 let carrier = false;
 let phase = 'join';
-let camX = 0, camY = 0;
 let revealId = null, revealUntil = 0;
 let ghostUntil = 0;
+
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
 function connect(name, code, cb) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -166,6 +172,7 @@ function handle(m, joinCb) {
       ghostUntil = 0;
       $('secret').classList.add('hidden');
       $('endOverlay').classList.add('hidden');
+      buildWorld();
       showGame();
       break;
     case 'state':
@@ -218,14 +225,14 @@ function handle(m, joinCb) {
 function show(id) {
   ['join', 'lobby'].forEach(s => $(s).classList.toggle('hidden', s !== id));
   const inGame = id === null;
-  $('cv').classList.toggle('hidden', !inGame);
+  $('gl').classList.toggle('hidden', !inGame);
   $('hud').classList.toggle('hidden', !inGame);
   $('effects').classList.toggle('hidden', !inGame);
   $('stick').classList.toggle('hidden', !inGame);
   if (!inGame) ['btnSearch', 'btnExpose', 'btnBuild', 'btnGhost'].forEach(b => $(b).classList.add('hidden'));
 }
 function showLobby() { show('lobby'); $('endOverlay').classList.add('hidden'); }
-function showGame() { show(null); resize(); }
+function showGame() { show(null); onResize(); }
 
 function renderLobby(m) {
   $('roomCode').textContent = m.room;
@@ -274,207 +281,298 @@ function showEnd(m) {
   $('endOverlay').classList.remove('hidden');
 }
 
-// ---------- rendering ----------
-const cv = $('cv'), ctx = cv.getContext('2d');
-let DPR = Math.min(2, window.devicePixelRatio || 1);
-function resize() {
-  cv.width = innerWidth * DPR; cv.height = innerHeight * DPR;
-  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+// ---------- 3D world ----------
+let renderer = null, scene = null, camera = null;
+let worldBuilt = false;
+let wallMeshes = [], dynWallMeshes = [], spotMeshes = [], powerMeshes = new Map(), playerMeshes = new Map();
+let vaultMesh = null, vaultGlow = null;
+let glFailed = false;
+
+const POW_COLORS = { speed: 0xffd34d, shield: 0x6bb8ff, reveal: 0xff8ad4, ghost: 0xb48cff, goggles: 0x7ee0ff };
+
+function initGL() {
+  if (renderer || glFailed) return !glFailed;
+  if (!window.THREE) { glFailed = true; fallback2d(); return false; }
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'low-power' });
+  } catch (e) {
+    glFailed = true; fallback2d(); return false;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.setSize(innerWidth, innerHeight);
+  $('gl').appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x141d33);
+  scene.fog = new THREE.Fog(0x141d33, 1500, 3600);
+  camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 10, 6000);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const dir = new THREE.DirectionalLight(0xfff2d9, 0.85);
+  dir.position.set(400, 800, 300);
+  scene.add(dir);
+  requestAnimationFrame(tick);
+  return true;
 }
-addEventListener('resize', resize);
 
-function me() { return state.players.find(p => p.id === myId); }
+function fallback2d() {
+  toast('المتصفح مش قادر يشغّل 3D.. بنحوّلك للنسخة الكلاسيك');
+  setTimeout(() => { location.href = '/classic' + location.search; }, 1800);
+}
 
-function draw() {
-  requestAnimationFrame(draw);
-  if (phase !== 'game' && phase !== 'end') return;
-  if (!map) return;
-  resizeIfNeeded();
-  const now = Date.now();
-  ctx.save();
-  ctx.scale(DPR, DPR);
+function floorTexture() {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 320;
+  const g = c.getContext('2d');
+  g.fillStyle = '#1b2745'; g.fillRect(0, 0, 512, 320);
+  g.strokeStyle = 'rgba(140,170,255,.12)'; g.lineWidth = 2;
+  for (let x = 0; x <= 512; x += 32) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 320); g.stroke(); }
+  for (let y = 0; y <= 320; y += 32) { g.beginPath(); g.moveTo(0, y); g.lineTo(512, y); g.stroke(); }
+  const t = new THREE.CanvasTexture(c);
+  return t;
+}
 
-  const m = me();
-  if (m && m.x > -100) {
-    camX += ((m.x - innerWidth / 2) - camX) * 0.15;
-    camY += ((m.y - innerHeight / 2) - camY) * 0.15;
-  }
-  camX = Math.max(0, Math.min(map.w - innerWidth, camX));
-  camY = Math.max(0, Math.min(map.h - innerHeight, camY));
-  if (map.w < innerWidth) camX = (map.w - innerWidth) / 2;
-  if (map.h < innerHeight) camY = (map.h - innerHeight) / 2;
+function nameSprite(text, color) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.font = 'bold 30px Tahoma';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.shadowColor = 'rgba(0,0,0,.8)'; g.shadowBlur = 6;
+  g.fillStyle = color;
+  g.fillText(text, 128, 32);
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  sp.scale.set(120, 30, 1);
+  return sp;
+}
 
-  // backdrop
-  const bg = ctx.createLinearGradient(0, 0, 0, innerHeight);
-  bg.addColorStop(0, '#131a2e');
-  bg.addColorStop(1, '#0d1120');
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, innerWidth, innerHeight);
+function makePlayerMesh(p) {
+  const info = roster[p.id] || {};
+  const color = AV_COLORS[(info.avatar !== undefined ? info.avatar : 0) % AV_COLORS.length];
+  const grp = new THREE.Group();
+  const bodyMat = new THREE.MeshLambertMaterial({ color });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(13, 15, 30, 10), bodyMat);
+  body.position.y = 15;
+  grp.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(10, 10, 8), new THREE.MeshLambertMaterial({ color: 0xffe0bd }));
+  head.position.y = 40;
+  grp.add(head);
+  // nose to show facing
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(4, 8, 6), new THREE.MeshLambertMaterial({ color: 0xffe0bd }));
+  nose.rotation.x = Math.PI / 2;
+  nose.position.set(0, 40, 12);
+  grp.add(nose);
+  const label = nameSprite((AVATARS[info.avatar] || '') + ' ' + (info.name || '?'), p.id === myId ? '#7ef0c1' : '#ffb98a');
+  label.position.y = 66;
+  grp.add(label);
+  // search ring
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(24, 3, 6, 20), new THREE.MeshBasicMaterial({ color: 0xffd34d }));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 2;
+  ring.visible = false;
+  grp.add(ring);
+  grp.userData.ring = ring;
+  // reveal marker
+  const rmark = new THREE.Mesh(new THREE.TorusGeometry(30, 4, 6, 20), new THREE.MeshBasicMaterial({ color: 0xff4d4d }));
+  rmark.rotation.x = Math.PI / 2;
+  rmark.position.y = 56;
+  rmark.visible = false;
+  grp.add(rmark);
+  grp.userData.rmark = rmark;
+  // ice block for frozen
+  const ice = new THREE.Mesh(new THREE.BoxGeometry(42, 54, 42), new THREE.MeshLambertMaterial({ color: 0x9ecbff, transparent: true, opacity: 0.45 }));
+  ice.position.y = 27;
+  ice.visible = false;
+  grp.add(ice);
+  grp.userData.ice = ice;
+  // progress bar (search/deposit)
+  const barBg = new THREE.Mesh(new THREE.BoxGeometry(50, 6, 2), new THREE.MeshBasicMaterial({ color: 0x22304f }));
+  barBg.position.y = 84;
+  barBg.visible = false;
+  grp.add(barBg);
+  const barFg = new THREE.Mesh(new THREE.BoxGeometry(50, 6, 2), new THREE.MeshBasicMaterial({ color: 0x7ef0c1 }));
+  barFg.position.y = 84;
+  barFg.visible = false;
+  grp.add(barFg);
+  grp.userData.barBg = barBg;
+  grp.userData.barFg = barFg;
+  grp.userData.bodyMat = bodyMat;
+  return grp;
+}
 
-  ctx.translate(-camX, -camY);
+function buildWorld() {
+  if (!initGL()) return;
+  // clear previous round's dynamic stuff
+  for (const w of dynWallMeshes) scene.remove(w);
+  dynWallMeshes = [];
+  for (const [, m] of powerMeshes) scene.remove(m);
+  powerMeshes.clear();
+  for (const [, m] of playerMeshes) scene.remove(m);
+  playerMeshes.clear();
+  if (worldBuilt) return;
+  worldBuilt = true;
 
-  // floor
-  ctx.fillStyle = '#161d31';
-  ctx.fillRect(0, 0, map.w, map.h);
-  ctx.strokeStyle = 'rgba(255,255,255,0.035)';
-  ctx.lineWidth = 1;
-  for (let gx = 0; gx < map.w; gx += 80) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, map.h); ctx.stroke(); }
-  for (let gy = 0; gy < map.h; gy += 80) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(map.w, gy); ctx.stroke(); }
+  const skirt = new THREE.Mesh(new THREE.PlaneGeometry(8000, 8000), new THREE.MeshBasicMaterial({ color: 0x10182c }));
+  skirt.rotation.x = -Math.PI / 2;
+  skirt.position.set(map.w / 2, -2, map.h / 2);
+  scene.add(skirt);
 
-  // vault (pulsing)
-  const v = map.vault;
-  const pulse = 0.12 + 0.06 * Math.sin(now / 400);
-  ctx.fillStyle = 'rgba(255,211,77,' + pulse + ')';
-  ctx.fillRect(v.x, v.y, v.w, v.h);
-  ctx.save();
-  ctx.shadowColor = '#ffd34d'; ctx.shadowBlur = 18;
-  ctx.strokeStyle = '#ffd34d'; ctx.lineWidth = 3;
-  ctx.setLineDash([10, 8]);
-  ctx.strokeRect(v.x, v.y, v.w, v.h);
-  ctx.setLineDash([]);
-  ctx.restore();
-  ctx.font = '36px serif'; ctx.textAlign = 'center';
-  ctx.fillText('🏦', v.x + v.w / 2, v.y + v.h / 2 + 4);
-  ctx.font = 'bold 16px Tahoma'; ctx.fillStyle = '#ffd34d';
-  ctx.fillText('الخزنة', v.x + v.w / 2, v.y + v.h / 2 + 34);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(map.w, map.h), new THREE.MeshLambertMaterial({ map: floorTexture() }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(map.w / 2, 0, map.h / 2);
+  scene.add(floor);
 
-  // spots (crates)
-  for (const s of map.spots) {
-    const searched = state.spots.includes(s.id);
-    ctx.globalAlpha = searched ? 0.22 : 1;
-    ctx.save();
-    if (!searched) { ctx.shadowColor = 'rgba(201,141,75,.6)'; ctx.shadowBlur = 10; }
-    const g = ctx.createLinearGradient(s.x - 20, s.y - 20, s.x + 20, s.y + 20);
-    g.addColorStop(0, '#a5763f'); g.addColorStop(1, '#7a5227');
-    ctx.fillStyle = g;
-    roundRect(s.x - 20, s.y - 20, 40, 40, 7); ctx.fill();
-    ctx.restore();
-    ctx.strokeStyle = '#54371a'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(s.x - 16, s.y - 16); ctx.lineTo(s.x + 16, s.y + 16);
-    ctx.moveTo(s.x + 16, s.y - 16); ctx.lineTo(s.x - 16, s.y + 16); ctx.stroke();
-    ctx.globalAlpha = 1;
-    if (!searched) {
-      ctx.font = '18px serif';
-      ctx.fillText('❓', s.x, s.y - 30 + 3 * Math.sin(now / 350 + s.id));
-    }
-  }
-
-  // search progress bars over boxes being searched
-  for (const p of state.players) {
-    if (!p.sp || p.spid < 0) continue;
-    const s = map.spots[p.spid];
-    const bw = 52, bh = 8;
-    ctx.fillStyle = 'rgba(0,0,0,.55)';
-    roundRect(s.x - bw / 2, s.y - 46, bw, bh, 4); ctx.fill();
-    const pg = ctx.createLinearGradient(s.x - bw / 2, 0, s.x + bw / 2, 0);
-    pg.addColorStop(0, '#7ef0c1'); pg.addColorStop(1, '#38c88f');
-    ctx.fillStyle = pg;
-    if (p.sp > 0.01) { roundRect(s.x - bw / 2 + 1.5, s.y - 46 + 1.5, (bw - 3) * p.sp, bh - 3, 3); ctx.fill(); }
-  }
-
-  // walls (static, 3D-ish)
+  const wallMat = new THREE.MeshLambertMaterial({ color: 0x3a4a6e });
+  const capMat = new THREE.MeshLambertMaterial({ color: 0x4d618c });
   for (const w of map.walls) {
-    ctx.fillStyle = '#232f4f';
-    roundRect(w.x, w.y, w.w, w.h, 4); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,.09)';
-    roundRect(w.x, w.y, w.w, Math.min(6, w.h), 4); ctx.fill();
+    const h = 55;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w.w, h, w.h), wallMat);
+    m.position.set(w.x + w.w / 2, h / 2, w.y + w.h / 2);
+    scene.add(m);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(w.w + 4, 6, w.h + 4), capMat);
+    cap.position.set(w.x + w.w / 2, h + 3, w.y + w.h / 2);
+    scene.add(cap);
+    wallMeshes.push(m, cap);
   }
 
-  // built walls (with fade-out)
-  for (const w of (state.walls || [])) {
-    const a = w.ttl <= 3 ? Math.max(0.25, w.ttl / 3) : 1;
-    ctx.globalAlpha = a;
-    ctx.save();
-    ctx.shadowColor = 'rgba(201,141,75,.7)'; ctx.shadowBlur = 8;
-    const g = ctx.createLinearGradient(w.x, w.y, w.x, w.y + w.h);
-    g.addColorStop(0, '#b57e42'); g.addColorStop(1, '#8a5c28');
-    ctx.fillStyle = g;
-    roundRect(w.x, w.y, w.w, w.h, 6); ctx.fill();
-    ctx.restore();
-    ctx.strokeStyle = 'rgba(84,55,26,.9)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(w.x + 6, w.y + w.h / 2); ctx.lineTo(w.x + w.w - 6, w.y + w.h / 2); ctx.stroke();
-    ctx.globalAlpha = 1;
-  }
+  // crates
+  const crateMat = new THREE.MeshLambertMaterial({ color: 0xb97f3e });
+  map.spots.forEach((s, i) => {
+    const id = s.id !== undefined ? s.id : i;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(40, 40, 40), crateMat.clone());
+    m.position.set(s.x, 20, s.y);
+    m.rotation.y = (i % 4) * 0.4;
+    m.userData.spotId = id;
+    scene.add(m);
+    spotMeshes.push(m);
+  });
 
-  // power-ups (floating)
-  for (const pu of (state.powers || [])) {
-    const bob = 4 * Math.sin(now / 300 + pu.id);
-    const icon = pu.type === 'speed' ? '⚡' : pu.type === 'shield' ? '🛡️' : pu.type === 'reveal' ? '👁️' : pu.type === 'ghost' ? '👻' : '🥽';
-    ctx.save();
-    ctx.shadowColor = pu.type === 'speed' ? '#ffd34d' : pu.type === 'shield' ? '#6bb8ff' : pu.type === 'reveal' ? '#ff8ad4' : pu.type === 'ghost' ? '#c9a0ff' : '#7ee0ff';
-    ctx.shadowBlur = 16;
-    ctx.fillStyle = 'rgba(255,255,255,.1)';
-    ctx.beginPath(); ctx.arc(pu.x, pu.y + bob, 17, 0, 7); ctx.fill();
-    ctx.restore();
-    ctx.font = '22px serif';
-    ctx.fillText(icon, pu.x, pu.y + bob + 7);
-  }
+  // vault
+  const v = map.vault;
+  vaultMesh = new THREE.Mesh(new THREE.BoxGeometry(70, 60, 70), new THREE.MeshLambertMaterial({ color: 0x2f8f5b, emissive: 0x1d5c39 }));
+  vaultMesh.position.set(v.x + v.w / 2, 30, v.y + v.h / 2);
+  scene.add(vaultMesh);
+  vaultGlow = new THREE.Mesh(new THREE.TorusGeometry(90, 6, 8, 28), new THREE.MeshBasicMaterial({ color: 0x7ef0c1, transparent: true, opacity: 0.5 }));
+  vaultGlow.rotation.x = Math.PI / 2;
+  vaultGlow.position.set(v.x + v.w / 2, 4, v.y + v.h / 2);
+  scene.add(vaultGlow);
+}
+
+let camPos = null;
+function tick() {
+  requestAnimationFrame(tick);
+  if (!renderer || (phase !== 'game' && phase !== 'end')) return;
+  const now = Date.now();
 
   // players
+  const seen = new Set();
   for (const p of state.players) {
-    if (p.x < -100) continue; // ghosted
-    const info = roster[p.id] || { name: '?', bot: false };
-    const isMe = p.id === myId;
-    const revealed = revealId === p.id && now < revealUntil;
-
-    if (p.s) {
-      const t = (now % 900) / 900;
-      ctx.strokeStyle = 'rgba(126,240,193,' + (0.8 - t * 0.7) + ')';
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(p.x, p.y, 20 + t * 26, 0, 7); ctx.stroke();
+    seen.add(p.id);
+    let m = playerMeshes.get(p.id);
+    if (!m) { m = makePlayerMesh(p); playerMeshes.set(p.id, m); scene.add(m); }
+    if (p.x < -100) { m.visible = false; continue; }
+    m.visible = true;
+    m.position.x = p.x;
+    m.position.z = p.y;
+    // face movement direction
+    if (m._lx !== undefined) {
+      const dx = p.x - m._lx, dy = p.y - m._ly;
+      if (Math.abs(dx) + Math.abs(dy) > 0.5) m.rotation.y = Math.atan2(dx, dy);
     }
-    if (revealed) {
-      ctx.save();
-      ctx.shadowColor = '#ff4d4d'; ctx.shadowBlur = 24;
-      ctx.strokeStyle = '#ff4d4d'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(p.x, p.y, 22 + 2 * Math.sin(now / 150), 0, 7); ctx.stroke();
-      ctx.restore();
-      ctx.font = '16px serif'; ctx.fillText('👁️', p.x, p.y - 30);
+    m._lx = p.x; m._ly = p.y;
+    m.userData.ring.visible = !!p.s;
+    if (p.s) m.userData.ring.rotation.z = now / 300;
+    m.userData.ice.visible = !!p.f;
+    const ghosted = (p.g === 1) || (p.id === myId && state.me && state.me.ghost);
+    m.userData.bodyMat.transparent = ghosted;
+    m.userData.bodyMat.opacity = ghosted ? 0.35 : 1;
+    m.userData.rmark.visible = (revealId === p.id && now < revealUntil);
+    if (m.userData.rmark.visible) m.userData.rmark.scale.setScalar(1 + 0.1 * Math.sin(now / 150));
+    // progress bars
+    let frac = 0, col = 0x7ef0c1;
+    if (p.sp > 0) { frac = p.sp; col = 0x7ef0c1; }
+    if (p.id === myId && state.me && state.me.deposit > 0) { frac = state.me.deposit; col = 0xffd34d; }
+    m.userData.barBg.visible = m.userData.barFg.visible = frac > 0;
+    if (frac > 0) {
+      m.userData.barFg.scale.x = Math.max(0.02, frac);
+      m.userData.barFg.position.x = -25 * (1 - frac);
+      m.userData.barFg.material.color.setHex(col);
     }
-
-    ctx.save();
-    if (isMe && state.me && state.me.speed) { ctx.shadowColor = '#ffd34d'; ctx.shadowBlur = 16; }
-    if ((isMe && state.me && state.me.ghost) || p.g) ctx.globalAlpha = 0.45;
-    const body = ctx.createRadialGradient(p.x - 4, p.y - 5, 2, p.x, p.y, 15);
-    if (p.f) { body.addColorStop(0, '#8fb0ee'); body.addColorStop(1, '#4a68b8'); }
-    else if (isMe) { body.addColorStop(0, '#a4f5cf'); body.addColorStop(1, '#3ecf92'); }
-    else { body.addColorStop(0, '#ffb98a'); body.addColorStop(1, '#e8773d'); }
-    ctx.fillStyle = body;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 14, 0, 7); ctx.fill();
-    if (p.a !== undefined && AVATARS[p.a]) { ctx.font = '15px serif'; ctx.fillText(AVATARS[p.a], p.x, p.y + 5); }
-    ctx.restore();
-
-    if (isMe) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p.x, p.y, 17, 0, 7); ctx.stroke(); }
-    if (p.f) { ctx.font = '16px serif'; ctx.fillText('🧊', p.x, p.y - 24); }
-    ctx.font = 'bold 13px Tahoma';
-    ctx.fillStyle = isMe ? '#7ef0c1' : '#e8eeff';
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 4;
-    ctx.fillText(escTxt(info.name) + (info.bot ? ' 🤖' : ''), p.x, p.y + 30);
-    ctx.restore();
+  }
+  for (const [id, m] of playerMeshes) {
+    if (!seen.has(id)) { scene.remove(m); playerMeshes.delete(id); }
   }
 
-  // deposit progress ring for carrier
-  if (m && state.me && state.me.deposit > 0) {
-    ctx.strokeStyle = '#ffd34d'; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.arc(m.x, m.y, 24, -Math.PI / 2, -Math.PI / 2 + state.me.deposit * Math.PI * 2); ctx.stroke();
+  // crates: searched ones sink and darken
+  for (const c of spotMeshes) {
+    const searched = state.spots.includes(c.userData.spotId);
+    const targetY = searched ? -14 : 20;
+    c.position.y += (targetY - c.position.y) * 0.1;
+    c.material.color.setHex(searched ? 0x4a3c28 : 0xb97f3e);
   }
 
-  ctx.restore();
+  // dynamic walls
+  const walls = state.walls || [];
+  while (dynWallMeshes.length < walls.length) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(80, 55, 80), new THREE.MeshLambertMaterial({ color: 0xc98d4b, transparent: true }));
+    scene.add(m);
+    dynWallMeshes.push(m);
+  }
+  dynWallMeshes.forEach((m, i) => {
+    if (i < walls.length) {
+      const w = walls[i];
+      m.visible = true;
+      m.scale.set((w.w || 80) / 80, 1, (w.h || 80) / 80);
+      m.position.set(w.x + (w.w || 80) / 2, 27, w.y + (w.h || 80) / 2);
+      m.material.opacity = Math.min(1, (w.ttl || 15) / 4);
+    } else m.visible = false;
+  });
+
+  // power-ups
+  const pseen = new Set();
+  for (const pu of (state.powers || [])) {
+    pseen.add(pu.id);
+    let m = powerMeshes.get(pu.id);
+    if (!m) {
+      m = new THREE.Mesh(new THREE.OctahedronGeometry(16), new THREE.MeshLambertMaterial({ color: POW_COLORS[pu.type] || 0xffffff, emissive: POW_COLORS[pu.type] || 0x888888, emissiveIntensity: 0.4 }));
+      powerMeshes.set(pu.id, m);
+      scene.add(m);
+    }
+    m.position.set(pu.x, 30 + 8 * Math.sin(now / 300 + pu.id), pu.y);
+    m.rotation.y = now / 500;
+  }
+  for (const [id, m] of powerMeshes) {
+    if (!pseen.has(id)) { scene.remove(m); powerMeshes.delete(id); }
+  }
+
+  // vault pulse
+  if (vaultGlow) {
+    vaultGlow.material.opacity = 0.35 + 0.25 * Math.sin(now / 400);
+    vaultGlow.scale.setScalar(1 + 0.06 * Math.sin(now / 400));
+  }
+
+  // camera: third-person follow
+  const mine = state.players.find(p => p.id === myId);
+  if (mine && mine.x > -100) {
+    const tx = mine.x, tz = mine.y;
+    if (!camPos) camPos = { x: tx, z: tz };
+    camPos.x += (tx - camPos.x) * 0.12;
+    camPos.z += (tz - camPos.z) * 0.12;
+    camera.position.set(camPos.x, 300, camPos.z + 430);
+    camera.lookAt(camPos.x, 20, camPos.z - 120);
+  }
+  renderer.render(scene, camera);
 }
 
-function resizeIfNeeded() {
-  if (cv.width !== innerWidth * DPR || cv.height !== innerHeight * DPR) resize();
+function onResize() {
+  if (!renderer) return;
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
 }
-function roundRect(x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
-function escTxt(s) { return String(s || '').slice(0, 14); }
+addEventListener('resize', onResize);
+
+function me() { return state.players.find(p => p.id === myId); }
 
 function updateHud() {
   const left = state.left || 0;
@@ -483,7 +581,6 @@ function updateHud() {
   $('timer').classList.toggle('warn', left <= 30);
   $('scoreline').textContent = 'متبقّي ' + (map ? map.spots.length - state.spots.length : 0) + ' أماكن';
 
-  // active effects chips
   const meInfo = state.me || {};
   const chips = [];
   if (meInfo.speed) chips.push('⚡ سرعة');
@@ -500,7 +597,8 @@ function updateHud() {
   let nearSpot = false;
   if (map) {
     for (const s of map.spots) {
-      if (state.spots.includes(s.id)) continue;
+      const sid = s.id !== undefined ? s.id : map.spots.indexOf(s);
+      if (state.spots.includes(sid)) continue;
       if (Math.hypot(m.x - s.x, m.y - s.y) < 80) { nearSpot = true; break; }
     }
   }
@@ -613,8 +711,7 @@ $('btnShare').addEventListener('click', async () => {
 });
 
 if (qs.get('room')) $('codeIn').value = qs.get('room').toUpperCase().slice(0, 4);
-
-draw();
+if (!window.THREE) fallback2d();
 </script>
 </body>
 </html>
