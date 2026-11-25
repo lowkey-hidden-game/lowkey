@@ -51,6 +51,9 @@
     text-shadow: 0 0 12px #ffd34d, 0 0 4px #000; }
   #btnMute { position: fixed; z-index: 7; top: 64px; right: 12px; width: 40px; height: 40px; border-radius: 50%;
     border: 1px solid rgba(255,255,255,.2); background: rgba(10,16,38,.7); color: #fff; font-size: 17px; }
+  #minimap { position: fixed; z-index: 7; top: 64px; left: 12px; width: 128px; height: 80px;
+    border-radius: 12px; border: 1px solid rgba(255,255,255,.18);
+    background: rgba(8,12,28,.72); box-shadow: 0 4px 14px rgba(0,0,0,.35); pointer-events: none; }
   @keyframes pop { 0% { transform: scale(.6); opacity: 0; } 70% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
   #toast:not(.hidden) { animation: pop .18s ease-out; }
   #btnSearch { left: 16px; bottom: 184px; background: #7ef0c1; }
@@ -120,6 +123,7 @@
 <div id="secret" class="hidden"><span>🤫 الكنز معاك! وصّله للخزنة من غير ما حد يشك</span></div>
 <div id="toast" class="hidden"><span id="toastTxt"></span></div>
 <div id="vaultArrow" class="hidden">➤</div>
+<canvas id="minimap" class="hidden" width="256" height="160"></canvas>
 <button id="btnMute" class="hidden">🔊</button>
 
 <div id="stick" class="hidden"><div id="knob"></div></div>
@@ -1500,6 +1504,7 @@ function tick() {
       camera.position.z += (Math.random() - 0.5) * shake * 16;
     }
   }
+  drawMinimap();
   // vault direction arrow when the vault is off-screen
   {
     const ar = $('vaultArrow');
@@ -1520,6 +1525,54 @@ function tick() {
     } else ar.classList.add('hidden');
   }
   renderer.render(scene, camera);
+}
+
+let miniCtx = null;
+function drawMinimap() {
+  const cv = $('minimap');
+  if (!map || phase !== 'game' || !state.players) { cv.classList.add('hidden'); return; }
+  cv.classList.remove('hidden');
+  if (!miniCtx) miniCtx = cv.getContext('2d');
+  const g = miniCtx, W = cv.width, H = cv.height, s = W / map.w;
+  const searched = state.spots || [];
+  g.clearRect(0, 0, W, H);
+  // walls
+  g.fillStyle = 'rgba(148,163,205,.30)';
+  map.walls.forEach(w => g.fillRect(w.x * s, w.y * s, Math.max(1.5, w.w * s), Math.max(1.5, w.h * s)));
+  // unsearched spots
+  g.fillStyle = 'rgba(255,255,255,.45)';
+  map.spots.forEach(sp => {
+    const sid = sp.id !== undefined ? sp.id : map.spots.indexOf(sp);
+    if (searched.includes(sid)) return;
+    g.beginPath(); g.arc(sp.x * s, sp.y * s, 3, 0, 7); g.fill();
+  });
+  // vault
+  const v = map.vault;
+  g.fillStyle = 'rgba(255,211,77,.85)';
+  g.fillRect(v.x * s, v.y * s, v.w * s, v.h * s);
+  g.strokeStyle = '#ffd34d'; g.lineWidth = 2;
+  g.strokeRect(v.x * s - 1, v.y * s - 1, v.w * s + 2, v.h * s + 2);
+  // other players (skip ghosted, same as the 3D view)
+  g.fillStyle = '#9fb4ff';
+  state.players.forEach(p => {
+    if (p.id === myId || p.x < -100 || p.g === 1) return;
+    g.beginPath(); g.arc(p.x * s, p.y * s, 3.5, 0, 7); g.fill();
+  });
+  // me: green wedge pointing where I face
+  const meP = state.players.find(p => p.id === myId);
+  if (meP && meP.x > -100) {
+    const pm = playerMeshes.get(myId);
+    const rot = pm ? pm.rotation.y : 0;
+    const dx = Math.sin(rot), dy = Math.cos(rot);
+    const px = meP.x * s, py = meP.y * s;
+    g.fillStyle = '#7cfc9a';
+    g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(px + dx * 9, py + dy * 9);
+    g.lineTo(px - dy * 5.5 - dx * 4.5, py + dx * 5.5 - dy * 4.5);
+    g.lineTo(px + dy * 5.5 - dx * 4.5, py - dx * 5.5 - dy * 4.5);
+    g.closePath(); g.fill(); g.stroke();
+  }
 }
 
 function onResize() {
