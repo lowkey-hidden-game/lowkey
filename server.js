@@ -46,6 +46,7 @@ const PLAYER_SPEED = 170;
 const CARRIER_SPEED = 148;
 const SPEED_BOOST = 1.45;
 const SPEED_BOOST_SECONDS = 12;
+const CROUCH_MULT = 0.55;
 const PLAYER_R = 14;
 const SEARCH_RADIUS = 80;
 const SEARCH_TIME = 2.5;
@@ -156,6 +157,7 @@ function startRound(room) {
     p.frozenUntil = 0;
     p.exposeCdUntil = 0;
     p.dx = 0; p.dy = 0;
+    p.crouch = false;
     p.walls = WALLS_PER_ROUND;
     p.wallCdUntil = 0;
     p.shield = false;
@@ -222,7 +224,15 @@ function collide(room, px, py, r) {
 function effectiveSpeed(p, now) {
   let s = p.carrier ? CARRIER_SPEED : PLAYER_SPEED;
   if (now < p.speedUntil) s *= SPEED_BOOST;
+  if (p.crouch) s *= CROUCH_MULT;
   return s;
+}
+
+// noise tier: 0 silent (crouch/still), 1 moving, 2 boosted sprint
+function noiseLevel(p, now) {
+  if (Math.hypot(p.dx, p.dy) < 0.01) return 0;
+  if (p.crouch) return 0;
+  return now < p.speedUntil ? 2 : 1;
 }
 
 function movePlayer(room, p, dt) {
@@ -457,6 +467,8 @@ function tick(room, dt) {
           f: now < p.frozenUntil ? 1 : 0,
           sp: p.channel && !hidden ? Math.min(1, p.searchProg / SEARCH_TIME) : 0,
           spid: p.channel && !hidden ? p.channel.spotId : -1,
+          n: hidden ? 0 : noiseLevel(p, now),
+          c: p.crouch ? 1 : 0,
         };
       }),
       spots: [...room.searched],
@@ -585,7 +597,7 @@ function addBot(room) {
     frozenUntil: 0, exposeCdUntil: 0, searching: false,
     walls: WALLS_PER_ROUND, wallCdUntil: 0, shield: false,
     speedUntil: 0, revealUntil: 0, ghostUsed: false, ghostUntil: 0,
-    gogglesUntil: 0,
+    gogglesUntil: 0, crouch: false,
     fx: 1, fy: 0, pauseUntil: 0, exposeAt: 0, adjacentSince: 0,
   };
   room.players.set(id, bot);
@@ -598,7 +610,7 @@ function addBot(room) {
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon', '.glb': 'model/gltf-binary' };
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') { res.writeHead(200); res.end('ok v3.3'); return; }
+  if (req.url === '/health') { res.writeHead(200); res.end('ok v3.4'); return; }
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
   if (urlPath === '/classic') urlPath = '/classic.html';
@@ -751,7 +763,7 @@ function handleMessage(msg, setPlayer, getPlayer, socket, leave) {
       frozenUntil: 0, exposeCdUntil: 0, searching: false,
       walls: WALLS_PER_ROUND, wallCdUntil: 0, shield: false,
       speedUntil: 0, revealUntil: 0, ghostUsed: false, ghostUntil: 0,
-      gogglesUntil: 0,
+      gogglesUntil: 0, crouch: false,
       fx: 1, fy: 0, pauseUntil: 0, exposeAt: 0, adjacentSince: 0,
     };
     room.players.set(id, p);
@@ -776,6 +788,9 @@ function handleMessage(msg, setPlayer, getPlayer, socket, leave) {
     case 'input':
       player.dx = Math.max(-1, Math.min(1, Number(msg.dx) || 0));
       player.dy = Math.max(-1, Math.min(1, Number(msg.dy) || 0));
+      break;
+    case 'crouch':
+      player.crouch = !!msg.on;
       break;
     case 'search':
       trySearch(room, player);
