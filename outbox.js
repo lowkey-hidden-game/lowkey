@@ -7,9 +7,25 @@ const REPO = 'lowkey-hidden-game/lowkey';
 const WAL_BRANCH = 'wal-rounds';
 const API = 'https://api.github.com';
 
+// A WAL file is trusted only if it parses, has the required fields with the right types,
+// and its payload UUID matches the filename. Anything else is left in place for inspection.
+function validWalItem(item, expectedUuid) {
+  if (!item || typeof item !== 'object') return false;
+  if (typeof item.round_uuid !== 'string' || !item.round_uuid || item.round_uuid !== expectedUuid) return false;
+  if (typeof item.room_code !== 'string' || typeof item.end_reason !== 'string') return false;
+  if (!item.started_at || !item.ended_at || isNaN(Date.parse(item.started_at)) || isNaN(Date.parse(item.ended_at))) return false;
+  if (typeof item.duration_s !== 'number' || !Number.isFinite(item.duration_s)) return false;
+  if (typeof item.humans_count !== 'number' || !Number.isFinite(item.humans_count)) return false;
+  if (item.players !== undefined) {
+    if (!Array.isArray(item.players)) return false;
+    for (const p of item.players) if (!p || typeof p.player_id !== 'string' || typeof p.result !== 'string') return false;
+  }
+  return true;
+}
+
 function makeOutbox({ recordRound, ghToken, log = console.log, fetchImpl = fetch, maxBackoffMs = 60000 }) {
   const queue = [];
-  const stats = { depth: 0, walPending: 0, delivered: 0, walPushed: 0, critical: 0 };
+  const stats = { depth: 0, walPending: 0, delivered: 0, walPushed: 0, critical: 0, corrupted: 0, ghAuthError: false };
   let working = false;
   let backoff = 1000;
 
@@ -23,11 +39,13 @@ function makeOutbox({ recordRound, ghToken, log = console.log, fetchImpl = fetch
     if (!c.ok && c.status !== 422) throw new Error('gh branch: ' + c.status); // 422 = exists
   }
 
+  function noteAuth(r) { if (r.status === 401 || r.status === 403) stats.ghAuthError = true; }
+
   async function walPush(item) {
     await ensureBranch();
     const body = { message: 'wal: round ' + item.round_uuid, content: Buffer.from(JSON.stringify(item)).toString('base64'), branch: WAL_BRANCH };
     const r = await fetchImpl(`${API}/repos/${REPO}/contents/wal/${item.round_uuid}.json`, { method: 'PUT', headers: headers(), body: JSON.stringify(body) });
-    if (!r.ok) throw new Error('gh wal push: ' + r.status);
+    if (!r.ok) { noteAuth(r); throw new Error('gh wal push: ' + r.status); }
     stats.walPushed++; stats.walPending++;
   }
 
@@ -44,13 +62,21 @@ function makeOutbox({ recordRound, ghToken, log = console.log, fetchImpl = fetch
   }
 
   // Replay WAL branch into Neon. Idempotent; a delete failure just means we reprocess next boot.
+  // Corrupted or malformed files are never replayed and never deleted: they stay for inspection.
   async function recover({ skipDeleteSha } = {}) {
     const files = await walList();
     let replayed = 0;
     for (const f of files) {
       const raw = await fetchImpl(f.download_url, { headers: headers() });
       if (!raw.ok) throw new Error('gh wal fetch: ' + raw.status);
-      const item = await raw.json();
+      let item = null;
+      const expectedUuid = (f.name || '').replace(/\.json$/, '');
+      try { item = await raw.json(); } catch (e) { item = null; }
+      if (!validWalItem(item, expectedUuid)) {
+        stats.corrupted++;
+        log('WAL: skipping corrupted/invalid file ' + f.name + ' (left in place for inspection)');
+        continue;
+      }
       await recordRound(item); // ON CONFLICT DO NOTHING - safe to reprocess
       replayed++;
       if (!(skipDeleteSha && f.sha === skipDeleteSha)) await walDelete(f);

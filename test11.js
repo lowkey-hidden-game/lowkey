@@ -245,6 +245,24 @@ const countRound = (pool, uuid) => pool.query('SELECT count(*)::int c FROM round
   const walGone = await until(async () => !(await walList(GH)).some(f => f.name === uuidC2 + '.json'), 8000, 'case2 wal cleanup').catch(() => false);
   check('case2: WAL file cleaned up after successful ack', walGone === true);
 
+  // Case 2b: corrupted / mismatched WAL files are never replayed and never deleted (left for inspection)
+  const badUuid = crypto.randomUUID();
+  const putWal = async (name, contentB64) => {
+    const r = await fetch(`${GH_API}/repos/${REPO}/contents/wal/${name}`, { method: 'PUT', headers: ghHeaders(GH), body: JSON.stringify({ message: 'test corrupt wal', content: contentB64, branch: WAL_BRANCH }) });
+    if (!r.ok) throw new Error('seed corrupt wal: ' + r.status);
+  };
+  await putWal(badUuid + '.json', Buffer.from('this is not json{{{').toString('base64')); // unparseable
+  const mismatchUuid = crypto.randomUUID();
+  await putWal(mismatchUuid + '.json', Buffer.from(JSON.stringify(roundItem(crypto.randomUUID(), A.playerId))).toString('base64')); // payload UUID != filename
+  await until(async () => (await walList(GH)).some(f => f.name === badUuid + '.json'), 10000, 'corrupt wal visible');
+  const ob2c = makeOutbox({ recordRound: it => recordRound(pool, it), ghToken: GH, log: () => {} });
+  const replayedBad = await ob2c.recover();
+  const walAfterBad = await walList(GH);
+  check('case2b: corrupted WAL files skipped, never replayed', replayedBad === 0 && ob2c.stats.corrupted === 2, 'corrupted=' + ob2c.stats.corrupted);
+  check('case2b: corrupted WAL files left in place for inspection', walAfterBad.some(f => f.name === badUuid + '.json') && walAfterBad.some(f => f.name === mismatchUuid + '.json'));
+  check('case2b: corrupted content never reached the database', (await countRound(pool, badUuid)) === 0 && (await countRound(pool, mismatchUuid)) === 0);
+  for (const f of walAfterBad) await walDelete(GH, f); // manual cleanup of inspection files
+
   // Case 3: expired GitHub token / GitHub unreachable -> CRITICAL counted, L1 keeps retrying
   const uuidC3 = crypto.randomUUID();
   let dbDown = true;
