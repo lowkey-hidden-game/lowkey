@@ -1,5 +1,5 @@
 // Pure crypto helpers for the identity system. No game-code coupling.
-// Player ID: public identity. Recovery Key: 128-bit secret, stored only as scrypt hash.
+// Player ID: public identity. Recovery Key: 160-bit secret, stored only as scrypt hash.
 const crypto = require('crypto');
 
 const B32 = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 chars: no 0,1,I,O - readable aloud
